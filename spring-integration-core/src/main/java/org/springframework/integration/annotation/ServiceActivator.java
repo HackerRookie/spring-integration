@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package org.springframework.integration.annotation;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
-import java.lang.annotation.Inherited;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
@@ -41,10 +40,10 @@ import java.lang.annotation.Target;
  * @author Mark Fisher
  * @author Gary Russell
  * @author Artem Bilan
+ * @author Yilin Wei
  */
-@Target({ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+@Target({ ElementType.METHOD, ElementType.ANNOTATION_TYPE })
 @Retention(RetentionPolicy.RUNTIME)
-@Inherited
 @Documented
 public @interface ServiceActivator {
 
@@ -77,7 +76,7 @@ public @interface ServiceActivator {
 	 * Only the handler is advised, not the downstream flow.
 	 * @return the advice chain.
 	 */
-	String[] adviceChain() default {};
+	String[] adviceChain() default { };
 
 	/**
 	 * Specify the maximum amount of time in milliseconds to wait when sending a reply
@@ -103,7 +102,7 @@ public @interface ServiceActivator {
 
 	/**
 	 * Specify a {@link org.springframework.context.SmartLifecycle} {@code phase} option.
-	 * Defaults {@code 0} for {@link org.springframework.integration.endpoint.PollingConsumer}
+	 * Defaults {@code Integer.MAX_VALUE / 2} for {@link org.springframework.integration.endpoint.PollingConsumer}
 	 * and {@code Integer.MIN_VALUE} for {@link org.springframework.integration.endpoint.EventDrivenConsumer}.
 	 * Can be specified as 'property placeholder', e.g. {@code ${foo.phase}}.
 	 * @return the {@code SmartLifecycle} phase.
@@ -111,11 +110,18 @@ public @interface ServiceActivator {
 	String phase() default "";
 
 	/**
+	 * Specify whether the service method is async.
+	 * This value is {@code false} by default.
+	 * @return the async flag.
+	 */
+	String async() default "";
+
+	/**
 	 * @return the {@link Poller} options for a polled endpoint
 	 * ({@link org.springframework.integration.scheduling.PollerMetadata}).
 	 * This attribute is an {@code array} just to allow an empty default (no poller).
 	 * Only one {@link Poller} element is allowed.
 	 */
-	Poller[] poller() default {};
+	Poller[] poller() default { };
 
 }

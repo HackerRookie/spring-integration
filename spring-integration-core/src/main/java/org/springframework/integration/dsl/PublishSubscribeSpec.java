@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
-import org.springframework.integration.dsl.channel.PublishSubscribeChannelSpec;
+import org.springframework.messaging.MessageChannel;
+import org.springframework.util.Assert;
 
 /**
  * @author Artem Bilan
@@ -44,11 +45,21 @@ public class PublishSubscribeSpec extends PublishSubscribeChannelSpec<PublishSub
 		return super.id(id);
 	}
 
-	public PublishSubscribeSpec subscribe(IntegrationFlow flow) {
+	public PublishSubscribeSpec subscribe(IntegrationFlow subFlow) {
+		Assert.notNull(subFlow, "'subFlow' must not be null");
+
 		IntegrationFlowBuilder flowBuilder =
 				IntegrationFlows.from(this.channel)
 						.bridge();
-		flow.configure(flowBuilder);
+
+		MessageChannel subFlowInput = subFlow.getInputChannel();
+
+		if (subFlowInput == null) {
+			subFlow.configure(flowBuilder);
+		}
+		else {
+			flowBuilder.channel(subFlowInput);
+		}
 		this.subscriberFlows.put(flowBuilder.get(), null);
 		return _this();
 	}

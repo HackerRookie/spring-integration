@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,10 +32,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.logging.Log;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -56,6 +58,8 @@ import org.springframework.util.concurrent.SettableListenableFuture;
 
 /**
  * @author Gary Russell
+ * @author Artem Bilan
+ *
  * @since 4.3
  *
  */
@@ -75,14 +79,17 @@ public class AsyncHandlerTests {
 
 	private volatile CountDownLatch exceptionLatch = new CountDownLatch(1);
 
+	private ExecutorService executor;
+
 	@Before
 	public void setup() {
+		this.executor = Executors.newSingleThreadExecutor();
 		this.handler = new AbstractReplyProducingMessageHandler() {
 
 			@Override
 			protected Object handleRequestMessage(Message<?> requestMessage) {
-				final SettableListenableFuture<String> future = new SettableListenableFuture<String>();
-				Executors.newSingleThreadExecutor().execute(() -> {
+				final SettableListenableFuture<String> future = new SettableListenableFuture<>();
+				AsyncHandlerTests.this.executor.execute(() -> {
 					try {
 						latch.await(10, TimeUnit.SECONDS);
 						switch (whichTest) {
@@ -118,10 +125,15 @@ public class AsyncHandlerTests {
 		}).when(logger).error(anyString(), any(Throwable.class));
 	}
 
+	@After
+	public void tearDown() {
+		this.executor.shutdownNow();
+	}
+
 	@Test
 	public void testGoodResult() {
 		this.whichTest = 0;
-		this.handler.handleMessage(new GenericMessage<String>("foo"));
+		this.handler.handleMessage(new GenericMessage<>("foo"));
 		assertNull(this.output.receive(0));
 		this.latch.countDown();
 		Message<?> received = this.output.receive(10000);
@@ -148,7 +160,7 @@ public class AsyncHandlerTests {
 	}
 
 	@Test
-	public void testGoodResultWithNoReplyChannelHeaderNoOutput() throws Exception {
+	public void testGoodResultWithNoReplyChannelHeaderNoOutput() {
 		this.whichTest = 0;
 		this.handler.setOutputChannel(null);
 		QueueChannel errorChannel = new QueueChannel();
@@ -156,7 +168,7 @@ public class AsyncHandlerTests {
 		this.handler.handleMessage(message);
 		assertNull(this.output.receive(0));
 		this.latch.countDown();
-		Message<?> errorMessage = errorChannel.receive(1000);
+		Message<?> errorMessage = errorChannel.receive(10000);
 		assertNotNull(errorMessage);
 		assertThat(errorMessage.getPayload(), instanceOf(DestinationResolutionException.class));
 		assertEquals("no output-channel or replyChannel header available",

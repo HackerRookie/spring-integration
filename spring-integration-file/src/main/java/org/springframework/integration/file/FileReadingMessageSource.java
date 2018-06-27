@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Queue;
@@ -49,8 +49,10 @@ import org.springframework.integration.aggregator.ResequencingMessageGroupProces
 import org.springframework.integration.context.IntegrationObjectSupport;
 import org.springframework.integration.core.MessageSource;
 import org.springframework.integration.file.filters.AcceptOnceFileListFilter;
+import org.springframework.integration.file.filters.DiscardAwareFileListFilter;
 import org.springframework.integration.file.filters.FileListFilter;
 import org.springframework.integration.file.filters.ResettableFileListFilter;
+import org.springframework.integration.support.AbstractIntegrationMessageBuilder;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessagingException;
 import org.springframework.util.Assert;
@@ -159,8 +161,7 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 	 *            queue
 	 */
 	public FileReadingMessageSource(Comparator<File> receptionOrderComparator) {
-		this.toBeReceived = new PriorityBlockingQueue<File>(
-				DEFAULT_INTERNAL_QUEUE_CAPACITY, receptionOrderComparator);
+		this.toBeReceived = new PriorityBlockingQueue<>(DEFAULT_INTERNAL_QUEUE_CAPACITY, receptionOrderComparator);
 	}
 
 
@@ -350,8 +351,21 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 
 	@Override
 	public Message<File> receive() throws MessagingException {
+		AbstractIntegrationMessageBuilder<File> messageBuilder = doReceive();
+
 		Message<File> message = null;
 
+		if (messageBuilder != null) {
+			message = messageBuilder.build();
+			if (logger.isInfoEnabled()) {
+				logger.info("Created message: [" + message + "]");
+			}
+		}
+
+		return message;
+	}
+
+	protected AbstractIntegrationMessageBuilder<File> doReceive() {
 		// rescan only if needed or explicitly configured
 		if (this.scanEachPoll || this.toBeReceived.isEmpty()) {
 			scanInputDirectory();
@@ -366,23 +380,22 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 		}
 
 		if (file != null) {
-			message = getMessageBuilderFactory().withPayload(file)
-					.setHeader(FileHeaders.RELATIVE_PATH, file.getAbsolutePath()
-							.replaceFirst(Matcher.quoteReplacement(this.directory.getAbsolutePath() + File.separator),
-									""))
+			return getMessageBuilderFactory()
+					.withPayload(file)
+					.setHeader(FileHeaders.RELATIVE_PATH,
+							file.getAbsolutePath()
+									.replaceFirst(Matcher.quoteReplacement(
+											this.directory.getAbsolutePath() + File.separator), ""))
 					.setHeader(FileHeaders.FILENAME, file.getName())
-					.setHeader(FileHeaders.ORIGINAL_FILE, file)
-					.build();
-			if (logger.isInfoEnabled()) {
-				logger.info("Created message: [" + message + "]");
-			}
+					.setHeader(FileHeaders.ORIGINAL_FILE, file);
 		}
-		return message;
+
+		return null;
 	}
 
 	private void scanInputDirectory() {
 		List<File> filteredFiles = this.scanner.listFiles(this.directory);
-		Set<File> freshFiles = new LinkedHashSet<File>(filteredFiles);
+		Set<File> freshFiles = new LinkedHashSet<>(filteredFiles);
 		if (!freshFiles.isEmpty()) {
 			this.toBeReceived.addAll(freshFiles);
 			if (logger.isDebugEnabled()) {
@@ -421,13 +434,21 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 
 	private class WatchServiceDirectoryScanner extends DefaultDirectoryScanner implements Lifecycle {
 
-		private final ConcurrentMap<Path, WatchKey> pathKeys = new ConcurrentHashMap<Path, WatchKey>();
+		private final ConcurrentMap<Path, WatchKey> pathKeys = new ConcurrentHashMap<>();
+
+		private final Set<File> filesToPoll = ConcurrentHashMap.newKeySet();
 
 		private WatchService watcher;
 
-		private Collection<File> initialFiles;
-
 		private WatchEvent.Kind<?>[] kinds;
+
+		@Override
+		public void setFilter(FileListFilter<File> filter) {
+			if (filter instanceof DiscardAwareFileListFilter) {
+				((DiscardAwareFileListFilter<File>) filter).addDiscardCallback(this.filesToPoll::add);
+			}
+			super.setFilter(filter);
+		}
 
 		@Override
 		public void start() {
@@ -444,9 +465,9 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 				this.kinds[i] = FileReadingMessageSource.this.watchEvents[i].kind;
 			}
 
-			final Set<File> initialFiles = walkDirectory(FileReadingMessageSource.this.directory.toPath(), null);
+			Set<File> initialFiles = walkDirectory(FileReadingMessageSource.this.directory.toPath(), null);
 			initialFiles.addAll(filesFromEvents());
-			this.initialFiles = initialFiles;
+			this.filesToPoll.addAll(initialFiles);
 		}
 
 		@Override
@@ -469,18 +490,22 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 		@Override
 		protected File[] listEligibleFiles(File directory) {
 			Assert.state(this.watcher != null, "The WatchService has'nt been started");
-			if (this.initialFiles != null) {
-				File[] initial = this.initialFiles.toArray(new File[this.initialFiles.size()]);
-				this.initialFiles = null;
-				return initial;
+
+			Set<File> files = new LinkedHashSet<>();
+
+			for (Iterator<File> iterator = this.filesToPoll.iterator(); iterator.hasNext(); ) {
+				files.add(iterator.next());
+				iterator.remove();
 			}
-			Collection<File> files = filesFromEvents();
+
+			files.addAll(filesFromEvents());
+
 			return files.toArray(new File[files.size()]);
 		}
 
 		private Set<File> filesFromEvents() {
 			WatchKey key = this.watcher.poll();
-			Set<File> files = new LinkedHashSet<File>();
+			Set<File> files = new LinkedHashSet<>();
 			while (key != null) {
 				File parentDir = ((Path) key.watchable()).toAbsolutePath().toFile();
 				for (WatchEvent<?> event : key.pollEvents()) {
@@ -547,7 +572,7 @@ public class FileReadingMessageSource extends IntegrationObjectSupport implement
 		}
 
 		private Set<File> walkDirectory(Path directory, final WatchEvent.Kind<?> kind) {
-			final Set<File> walkedFiles = new LinkedHashSet<File>();
+			final Set<File> walkedFiles = new LinkedHashSet<>();
 			try {
 				registerWatch(directory);
 				Files.walkFileTree(directory, new SimpleFileVisitor<Path>() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package org.springframework.integration.endpoint;
 
+import org.springframework.beans.factory.BeanInitializationException;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.core.AttributeAccessor;
 import org.springframework.integration.core.MessageProducer;
@@ -124,6 +125,12 @@ public abstract class MessageProducerSupport extends AbstractEndpoint implements
 		return this.errorChannel;
 	}
 
+	/**
+	 * Configure the default timeout value to use for send operations.
+	 * May be overridden for individual messages.
+	 * @param sendTimeout the send timeout in milliseconds
+	 * @see MessagingTemplate#setSendTimeout
+	 */
 	public void setSendTimeout(long sendTimeout) {
 		this.messagingTemplate.setSendTimeout(sendTimeout);
 	}
@@ -156,9 +163,17 @@ public abstract class MessageProducerSupport extends AbstractEndpoint implements
 
 	@Override
 	protected void onInit() {
+		try {
+			super.onInit();
+		}
+		catch (Exception e) {
+			throw new BeanInitializationException("Cannot initialize: " + this, e);
+		}
+
 		if (this.getBeanFactory() != null) {
 			this.messagingTemplate.setBeanFactory(this.getBeanFactory());
 		}
+
 	}
 
 	/**

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,15 +26,15 @@ import java.util.regex.Pattern;
 import org.springframework.beans.factory.BeanInitializationException;
 import org.springframework.context.Lifecycle;
 import org.springframework.integration.endpoint.AbstractFetchLimitingMessageSource;
+import org.springframework.integration.file.DefaultDirectoryScanner;
+import org.springframework.integration.file.DirectoryScanner;
 import org.springframework.integration.file.FileReadingMessageSource;
-import org.springframework.integration.file.RecursiveDirectoryScanner;
-import org.springframework.integration.file.filters.AcceptOnceFileListFilter;
 import org.springframework.integration.file.filters.CompositeFileListFilter;
 import org.springframework.integration.file.filters.FileListFilter;
 import org.springframework.integration.file.filters.FileSystemPersistentAcceptOnceFileListFilter;
 import org.springframework.integration.file.filters.RegexPatternFileListFilter;
 import org.springframework.integration.metadata.SimpleMetadataStore;
-import org.springframework.messaging.Message;
+import org.springframework.integration.support.AbstractIntegrationMessageBuilder;
 import org.springframework.util.Assert;
 
 /**
@@ -59,16 +59,11 @@ import org.springframework.util.Assert;
  * @author Oleg Zhurakousky
  * @author Gary Russell
  * @author Artem Bilan
+ * @author Venil Noronha
  */
 public abstract class AbstractInboundFileSynchronizingMessageSource<F>
-		extends AbstractFetchLimitingMessageSource<File> implements Lifecycle {
-
-	private volatile boolean running;
-
-	/**
-	 * Should the endpoint attempt to create the local directory? True by default.
-	 */
-	private volatile boolean autoCreateLocalDirectory = true;
+		extends AbstractFetchLimitingMessageSource<File>
+		implements Lifecycle {
 
 	/**
 	 * An implementation that will handle the chores of actually connecting to and synchronizing
@@ -77,16 +72,28 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 	private final AbstractInboundFileSynchronizer<F> synchronizer;
 
 	/**
-	 * Directory to which things should be synchronized locally.
+	 * The actual {@link LocalFileReadingMessageSource} that monitors the local file system once files are synchronized.
 	 */
-	private volatile File localDirectory;
+	private final LocalFileReadingMessageSource fileSource;
 
 	/**
-	 * The actual {@link FileReadingMessageSource} that monitors the local file system once files are synchronized.
+	 * Should the endpoint attempt to create the local directory? True by default.
 	 */
-	private final FileReadingMessageSource fileSource;
+	private boolean autoCreateLocalDirectory = true;
 
-	private volatile FileListFilter<File> localFileListFilter;
+	/**
+	 * Directory to which things should be synchronized locally.
+	 */
+	private File localDirectory;
+
+	private FileListFilter<File> localFileListFilter;
+
+	/**
+	 * Whether the {@link DirectoryScanner} was explicitly set.
+	 */
+	private boolean scannerExplicitlySet = false;
+
+	private volatile boolean running;
 
 
 	public AbstractInboundFileSynchronizingMessageSource(AbstractInboundFileSynchronizer<F> synchronizer) {
@@ -95,13 +102,14 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 
 	public AbstractInboundFileSynchronizingMessageSource(AbstractInboundFileSynchronizer<F> synchronizer,
 			Comparator<File> comparator) {
+
 		Assert.notNull(synchronizer, "synchronizer must not be null");
 		this.synchronizer = synchronizer;
 		if (comparator == null) {
-			this.fileSource = new FileReadingMessageSource();
+			this.fileSource = new LocalFileReadingMessageSource();
 		}
 		else {
-			this.fileSource = new FileReadingMessageSource(comparator);
+			this.fileSource = new LocalFileReadingMessageSource(comparator);
 		}
 	}
 
@@ -119,10 +127,8 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 	 * after they have been synchronized. It will be combined with a filter that
 	 * will prevent accessing files that are in the process of being synchronized
 	 * (files having the {@link AbstractInboundFileSynchronizer#getTemporaryFileSuffix()}).
-	 * <p>
-	 * The default is an {@link AcceptOnceFileListFilter} which filters duplicate file
-	 * names (processed during the current execution).
-	 *
+	 * <p> The default is an {@link FileSystemPersistentAcceptOnceFileListFilter}
+	 * which filters duplicate file names (processed during the current execution).
 	 * @param localFileListFilter The local file list filter.
 	 */
 	public void setLocalFilter(FileListFilter<File> localFileListFilter) {
@@ -139,10 +145,22 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 	public void setUseWatchService(boolean useWatchService) {
 		this.fileSource.setUseWatchService(useWatchService);
 		if (useWatchService) {
-			this.fileSource.setWatchEvents(FileReadingMessageSource.WatchEventType.CREATE,
+			this.fileSource.setWatchEvents(
+					FileReadingMessageSource.WatchEventType.CREATE,
 					FileReadingMessageSource.WatchEventType.MODIFY,
 					FileReadingMessageSource.WatchEventType.DELETE);
 		}
+	}
+
+	/**
+	 * Switch the local {@link FileReadingMessageSource} to use a custom
+	 * {@link DirectoryScanner}.
+	 * @param scanner the {@link DirectoryScanner} to use.
+	 * @since 5.0
+	 */
+	public void setScanner(DirectoryScanner scanner) {
+		this.fileSource.setScanner(scanner);
+		this.scannerExplicitlySet = true;
 	}
 
 	@Override
@@ -163,12 +181,18 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 			}
 			this.fileSource.setDirectory(this.localDirectory);
 			if (this.localFileListFilter == null) {
-				this.localFileListFilter = new FileSystemPersistentAcceptOnceFileListFilter(
-						new SimpleMetadataStore(), getComponentName());
+				this.localFileListFilter =
+						new FileSystemPersistentAcceptOnceFileListFilter(new SimpleMetadataStore(), getComponentName());
 			}
 			FileListFilter<File> filter = buildFilter();
-			if (!this.fileSource.isUseWatchService()) {
-				RecursiveDirectoryScanner directoryScanner = new RecursiveDirectoryScanner();
+			if (this.scannerExplicitlySet) {
+				Assert.state(!this.fileSource.isUseWatchService(),
+						"'useWatchService' and 'scanner' are mutually exclusive.");
+				this.fileSource.getScanner()
+						.setFilter(filter);
+			}
+			else if (!this.fileSource.isUseWatchService()) {
+				DirectoryScanner directoryScanner = new DefaultDirectoryScanner();
 				directoryScanner.setFilter(filter);
 				this.fileSource.setScanner(directoryScanner);
 			}
@@ -185,8 +209,7 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 			throw e;
 		}
 		catch (Exception e) {
-			throw new BeanInitializationException("Failure during initialization of MessageSource for: "
-					+ this.getClass(), e);
+			throw new BeanInitializationException("Failure during initialization for: " + this, e);
 		}
 	}
 
@@ -221,20 +244,41 @@ public abstract class AbstractInboundFileSynchronizingMessageSource<F>
 	 * @param maxFetchSize the maximum files to fetch.
 	 */
 	@Override
-	public final Message<File> doReceive(int maxFetchSize) {
-		Message<File> message = this.fileSource.receive();
-		if (message == null) {
+	public final AbstractIntegrationMessageBuilder<File> doReceive(int maxFetchSize) {
+		AbstractIntegrationMessageBuilder<File> messageBuilder = this.fileSource.doReceive();
+		if (messageBuilder == null) {
 			this.synchronizer.synchronizeToLocalDirectory(this.localDirectory, maxFetchSize);
-			message = this.fileSource.receive();
+			messageBuilder = this.fileSource.doReceive();
 		}
-		return message;
+
+		return messageBuilder;
 	}
 
 	private FileListFilter<File> buildFilter() {
 		Pattern completePattern = Pattern.compile("^.*(?<!" + this.synchronizer.getTemporaryFileSuffix() + ")$");
-		return new CompositeFileListFilter<File>(Arrays.asList(
-				this.localFileListFilter,
-				new RegexPatternFileListFilter(completePattern)));
+		return new CompositeFileListFilter<>(
+				Arrays.asList(this.localFileListFilter, new RegexPatternFileListFilter(completePattern)));
+	}
+
+
+	/**
+	 * The {@link FileReadingMessageSource} extension to increase visibility
+	 * for the {@link FileReadingMessageSource#doReceive()}
+	 */
+	private static final class LocalFileReadingMessageSource extends FileReadingMessageSource {
+
+		LocalFileReadingMessageSource() {
+		}
+
+		LocalFileReadingMessageSource(Comparator<File> receptionOrderComparator) {
+			super(receptionOrderComparator);
+		}
+
+		@Override
+		protected AbstractIntegrationMessageBuilder<File> doReceive() {
+			return super.doReceive();
+		}
+
 	}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,10 +20,11 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.locks.Lock;
 
@@ -75,6 +76,9 @@ import org.springframework.util.CollectionUtils;
  * By default the {@link CorrelationStrategy} will be a
  * {@link HeaderAttributeCorrelationStrategy} and the {@link ReleaseStrategy} will be a
  * {@link SequenceSizeReleaseStrategy}.
+ * <p>
+ * Use proper {@link CorrelationStrategy} for cases when same {@link MessageStore} is used
+ * for multiple handlers to ensure uniqueness of message groups across handlers.
  *
  * @author Iwein Fuld
  * @author Dave Syer
@@ -83,6 +87,8 @@ import org.springframework.util.CollectionUtils;
  * @author Artem Bilan
  * @author David Liu
  * @author Enrique Rodriguez
+ * @author Meherzad Lahewala
+ *
  * @since 2.0
  */
 public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageProducingHandler
@@ -90,61 +96,72 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 
 	protected final Log logger = LogFactory.getLog(getClass());
 
-	private final Comparator<Message<?>> sequenceNumberComparator = new SequenceNumberComparator();
+	private final Comparator<Message<?>> sequenceNumberComparator = new MessageSequenceComparator();
 
-	private final Map<UUID, ScheduledFuture<?>> expireGroupScheduledFutures = new HashMap<>();
+	private final Map<UUID, ScheduledFuture<?>> expireGroupScheduledFutures = new ConcurrentHashMap<>();
+
+	private final Set<Object> groupIds = ConcurrentHashMap.newKeySet();
 
 	private MessageGroupProcessor outputProcessor;
 
-	private volatile MessageGroupStore messageStore;
+	private MessageGroupStore messageStore;
 
-	private volatile CorrelationStrategy correlationStrategy;
+	private CorrelationStrategy correlationStrategy;
 
-	private volatile ReleaseStrategy releaseStrategy;
+	private ReleaseStrategy releaseStrategy;
 
-	private volatile boolean releaseStrategySet;
+	private boolean releaseStrategySet;
 
-	private volatile MessageChannel discardChannel;
+	private MessageChannel discardChannel;
 
-	private volatile String discardChannelName;
+	private String discardChannelName;
 
 	private boolean sendPartialResultOnExpiry = false;
 
-	private volatile boolean sequenceAware = false;
+	private boolean sequenceAware = false;
 
-	private volatile LockRegistry lockRegistry = new DefaultLockRegistry();
+	private LockRegistry lockRegistry = new DefaultLockRegistry();
 
 	private boolean lockRegistrySet = false;
 
-	private volatile long minimumTimeoutForEmptyGroups;
+	private long minimumTimeoutForEmptyGroups;
 
-	private volatile boolean releasePartialSequences;
+	private boolean releasePartialSequences;
 
-	private volatile Expression groupTimeoutExpression;
+	private Expression groupTimeoutExpression;
 
-	private volatile List<Advice> forceReleaseAdviceChain;
+	private List<Advice> forceReleaseAdviceChain;
 
 	private MessageGroupProcessor forceReleaseProcessor = new ForceReleaseMessageGroupProcessor();
 
 	private EvaluationContext evaluationContext;
 
-	private volatile ApplicationEventPublisher applicationEventPublisher;
+	private ApplicationEventPublisher applicationEventPublisher;
 
-	private volatile boolean expireGroupsUponTimeout = true;
+	private boolean expireGroupsUponTimeout = true;
 
 	private volatile boolean running;
 
 	public AbstractCorrelatingMessageHandler(MessageGroupProcessor processor, MessageGroupStore store,
 			CorrelationStrategy correlationStrategy, ReleaseStrategy releaseStrategy) {
+
 		Assert.notNull(processor, "'processor' must not be null");
 		Assert.notNull(store, "'store' must not be null");
 
 		setMessageStore(store);
 		this.outputProcessor = processor;
-		this.correlationStrategy = (correlationStrategy == null
-				? new HeaderAttributeCorrelationStrategy(IntegrationMessageHeaderAccessor.CORRELATION_ID)
-				: correlationStrategy);
-		this.releaseStrategy = releaseStrategy == null ? new SimpleSequenceSizeReleaseStrategy() : releaseStrategy;
+
+		this.correlationStrategy =
+				correlationStrategy == null
+						? new HeaderAttributeCorrelationStrategy(IntegrationMessageHeaderAccessor.CORRELATION_ID)
+						: correlationStrategy;
+
+		this.releaseStrategy =
+				releaseStrategy == null
+						? new SimpleSequenceSizeReleaseStrategy()
+						: releaseStrategy;
+
+		this.releaseStrategySet = releaseStrategy != null;
 		this.sequenceAware = this.releaseStrategy instanceof SequenceSizeReleaseStrategy;
 	}
 
@@ -186,7 +203,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	}
 
 	public void setForceReleaseAdviceChain(List<Advice> forceReleaseAdviceChain) {
-		Assert.notNull(forceReleaseAdviceChain, "forceReleaseAdviceChain must not be null");
+		Assert.notNull(forceReleaseAdviceChain, "'forceReleaseAdviceChain' must not be null");
 		this.forceReleaseAdviceChain = forceReleaseAdviceChain;
 	}
 
@@ -233,7 +250,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		}
 
 		if (this.releasePartialSequences) {
-			Assert.isInstanceOf(SequenceSizeReleaseStrategy.class, this.releaseStrategy,
+			Assert.isInstanceOf(SequenceSizeReleaseStrategy.class, this.releaseStrategy, () ->
 					"Release strategy of type [" + this.releaseStrategy.getClass().getSimpleName() +
 							"] cannot release partial sequences. Use a SequenceSizeReleaseStrategy instead.");
 			((SequenceSizeReleaseStrategy) this.releaseStrategy)
@@ -429,12 +446,12 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 				if (this.releaseStrategy.canRelease(messageGroup)) {
 					Collection<Message<?>> completedMessages = null;
 					try {
-						completedMessages = this.completeGroup(message, correlationKey, messageGroup);
+						completedMessages = completeGroup(message, correlationKey, messageGroup);
 					}
 					finally {
-						// Always clean up even if there was an exception
-						// processing messages
-						this.afterRelease(messageGroup, completedMessages);
+						// Possible clean (implementation dependency) up
+						// even if there was an exception processing messages
+						afterRelease(messageGroup, completedMessages);
 					}
 					if (!isExpireGroupsUponCompletion() && this.minimumTimeoutForEmptyGroups > 0) {
 						removeEmptyGroupAfterTimeout(messageGroup, this.minimumTimeoutForEmptyGroups);
@@ -480,7 +497,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 								if (this.logger.isDebugEnabled()) {
 									this.logger.debug("Removing empty group: " + groupUuid);
 								}
-								this.messageStore.removeMessageGroup(groupId);
+								remove(messageGroup);
 							}
 						}
 						finally {
@@ -510,13 +527,15 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		 * When 'groupTimeout' is evaluated to 'null' we do nothing.
 		 * The 'MessageGroupStoreReaper' can be used to 'forceComplete' message groups.
 		 */
-		if (groupTimeout != null && groupTimeout >= 0) {
+		if (groupTimeout != null) {
 			if (groupTimeout > 0) {
 				final Object groupId = messageGroup.getGroupId();
+				final long timestamp = messageGroup.getTimestamp();
+				final long lastModified = messageGroup.getLastModified();
 				ScheduledFuture<?> scheduledFuture = getTaskScheduler()
 						.schedule(() -> {
 							try {
-								processForceRelease(groupId);
+								processForceRelease(groupId, timestamp, lastModified);
 							}
 							catch (MessageDeliveryException e) {
 								if (AbstractCorrelatingMessageHandler.this.logger.isWarnEnabled()) {
@@ -543,9 +562,11 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		scheduleGroupToForceComplete(messageGroup);
 	}
 
-	private void processForceRelease(Object groupId) {
+	private void processForceRelease(Object groupId, long timestamp, long lastModified) {
 		MessageGroup messageGroup = this.messageStore.getMessageGroup(groupId);
-		this.forceReleaseProcessor.processMessageGroup(messageGroup);
+		if (messageGroup.getTimestamp() == timestamp && messageGroup.getLastModified() == lastModified) {
+			this.forceReleaseProcessor.processMessageGroup(messageGroup);
+		}
 	}
 
 	private void discardMessage(Message<?> message) {
@@ -609,9 +630,11 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 				}
 				long lastModifiedNow = groupNow.getLastModified();
 				int groupSize = groupNow.size();
+
 				if ((!groupNow.isComplete() || groupSize == 0)
 						&& group.getLastModified() == lastModifiedNow
 						&& group.getTimestamp() == groupNow.getTimestamp()) {
+
 					if (groupSize > 0) {
 						if (this.releaseStrategy.canRelease(groupNow)) {
 							completeGroup(correlationKey, groupNow);
@@ -670,9 +693,10 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 		}
 	}
 
-	void remove(MessageGroup group) {
+	protected void remove(MessageGroup group) {
 		Object correlationKey = group.getGroupId();
 		this.messageStore.removeMessageGroup(correlationKey);
+		this.groupIds.remove(group.getGroupId());
 	}
 
 	protected int findLastReleasedSequenceNumber(Object groupId, Collection<Message<?>> partialSequence) {
@@ -681,6 +705,7 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 	}
 
 	protected MessageGroup store(Object correlationKey, Message<?> message) {
+		this.groupIds.add(correlationKey);
 		return this.messageStore.addMessageToGroup(correlationKey, message);
 	}
 
@@ -850,7 +875,9 @@ public abstract class AbstractCorrelatingMessageHandler extends AbstractMessageP
 
 		@Override
 		public Object processMessageGroup(MessageGroup group) {
-			forceComplete(group);
+			if (AbstractCorrelatingMessageHandler.this.groupIds.contains(group.getGroupId())) {
+				forceComplete(group);
+			}
 			return null;
 		}
 

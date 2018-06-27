@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,6 +56,10 @@ import org.springframework.util.Assert;
  * @author Dave Syer
  * @author Artem Bilan
  * @author Vedran Pavic
+ * @author Glenn Renfro
+ * @author Kiel Boatman
+ * @author Gary Russell
+ *
  * @since 4.3.1
  */
 public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBean, ApplicationEventPublisherAware {
@@ -66,15 +70,7 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 
 	private static final Log logger = LogFactory.getLog(LockRegistryLeaderInitiator.class);
 
-	private static final Context NULL_CONTEXT = () -> false;
-
 	private final Object lifecycleMonitor = new Object();
-
-	/**
-	 * Executor service for running leadership daemon.
-	 */
-	private final ExecutorService executorService =
-			Executors.newSingleThreadExecutor(new CustomizableThreadFactory("lock-leadership-"));
 
 	/**
 	 * A lock registry. The locks it manages should be global (whatever that means for the
@@ -90,6 +86,31 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	 */
 	private final Candidate candidate;
 
+	private final Context nullContext = new Context() {
+
+		@Override
+		public boolean isLeader() {
+			return false;
+		}
+
+		@Override
+		public String getRole() {
+			return LockRegistryLeaderInitiator.this.candidate.getRole();
+		}
+
+	};
+
+	/**
+	 * Executor service for running leadership daemon.
+	 */
+	private ExecutorService executorService =
+			Executors.newSingleThreadExecutor(new CustomizableThreadFactory("lock-leadership-"));
+
+	/**
+	 * Flag to denote whether the {@link ExecutorService} was provided via the setter and
+	 * thus should not be shutdown when {@link #destroy()} is called
+	 */
+	private boolean executorServiceExplicitlySet;
 
 	/**
 	 * Time in milliseconds to wait in between attempts to re-acquire the lock, once it is
@@ -111,6 +132,8 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	 */
 	private long busyWaitMillis = DEFAULT_BUSY_WAIT_TIME;
 
+	private boolean publishFailedEvents = false;
+
 	private LeaderSelector leaderSelector;
 
 	private ApplicationEventPublisher applicationEventPublisher;
@@ -121,26 +144,26 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	private LeaderEventPublisher leaderEventPublisher;
 
 	/**
-	 * Future returned by submitting an {@link LeaderSelector} to
-	 * {@link #executorService}. This is used to cancel leadership.
-	 */
-	private volatile Future<?> future;
-
-	/**
 	 * @see SmartLifecycle
 	 */
-	private volatile boolean autoStartup = true;
+	private boolean autoStartup = true;
 
 	/**
 	 * @see SmartLifecycle which is an extension of org.springframework.context.Phased
 	 */
-	private volatile int phase;
+	private int phase;
 
 	/**
 	 * Flag that indicates whether the leadership election for this {@link #candidate} is
 	 * running.
 	 */
 	private volatile boolean running;
+
+	/**
+	 * Future returned by submitting an {@link LeaderSelector} to
+	 * {@link #executorService}. This is used to cancel leadership.
+	 */
+	private volatile Future<?> future;
 
 	/**
 	 * Create a new leader initiator with the provided lock registry and a default
@@ -164,9 +187,15 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 		this.candidate = candidate;
 	}
 
-	@Override
-	public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
-		this.applicationEventPublisher = applicationEventPublisher;
+	/**
+	 * Set the {@link ExecutorService}, where is not provided then a default of
+	 * single thread Executor will be used.
+	 * @param executorService the executor service
+	 * @since 5.0.2
+	 */
+	public void setExecutorService(ExecutorService executorService) {
+		this.executorService = executorService;
+		this.executorServiceExplicitlySet = true;
 	}
 
 	public void setHeartBeatMillis(long heartBeatMillis) {
@@ -178,11 +207,16 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	}
 
 	/**
-	 * Sets the {@link LeaderEventPublisher}.
+	 * Set the {@link LeaderEventPublisher}.
 	 * @param leaderEventPublisher the event publisher
 	 */
 	public void setLeaderEventPublisher(LeaderEventPublisher leaderEventPublisher) {
 		this.leaderEventPublisher = leaderEventPublisher;
+	}
+
+	@Override
+	public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+		this.applicationEventPublisher = applicationEventPublisher;
 	}
 
 	/**
@@ -222,13 +256,31 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	}
 
 	/**
-	 * @return the context (or null if not running)
+	 * @return the context.
 	 */
 	public Context getContext() {
 		if (this.leaderSelector == null) {
-			return NULL_CONTEXT;
+			return this.nullContext;
 		}
 		return this.leaderSelector.context;
+	}
+
+	public boolean isPublishFailedEvents() {
+		return this.publishFailedEvents;
+	}
+
+	/**
+	 * Enable or disable the publishing of failed events to the
+	 * specified applicationEventPublisher. Because of the large
+	 * number of failure events that can be published while attempting to get a
+	 * mutex during leader election (in the case that another instance is
+	 * holding the mutex), the default is set to false.
+	 * @param publishFailedEvents boolean that if true, failed events will
+	 * be published. If false, no failures will be published. Default is false.
+	 * @since 5.0
+	 */
+	public void setPublishFailedEvents(boolean publishFailedEvents) {
+		this.publishFailedEvents = publishFailedEvents;
 	}
 
 	/**
@@ -250,9 +302,11 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 	}
 
 	@Override
-	public void destroy() throws Exception {
+	public void destroy() {
 		stop();
-		this.executorService.shutdown();
+		if (!this.executorServiceExplicitlySet) {
+			this.executorService.shutdown();
+		}
 	}
 
 	@Override
@@ -274,7 +328,7 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 					this.future.cancel(true);
 				}
 				this.future = null;
-				logger.debug("Stopped LeaderInitiator");
+				logger.debug("Stopped LeaderInitiator for " + getContext());
 			}
 		}
 	}
@@ -304,8 +358,13 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 		@Override
 		public Void call() throws Exception {
 			try {
-				while (LockRegistryLeaderInitiator.this.running) {
+				while (isRunning()) {
 					try {
+
+						if (logger.isDebugEnabled()) {
+							logger.debug("Acquiring the lock for " + this.context);
+						}
+
 						// We always try to acquire the lock, in case it expired
 						boolean acquired = this.lock.tryLock(LockRegistryLeaderInitiator.this.heartBeatMillis,
 								TimeUnit.MILLISECONDS);
@@ -315,43 +374,90 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 								this.locked = true;
 								handleGranted();
 							}
+							else if (isPublishFailedEvents()) {
+								publishFailedToAcquire();
+							}
 						}
 						else if (acquired) {
 							// If we were able to acquire it but we were already locked we
 							// should release it
 							this.lock.unlock();
-							// Give it a chance to expire.
-							Thread.sleep(LockRegistryLeaderInitiator.this.heartBeatMillis);
+							if (isRunning()) {
+								// Give it a chance to expire.
+								Thread.sleep(LockRegistryLeaderInitiator.this.heartBeatMillis);
+							}
 						}
 						else {
 							this.locked = false;
 							// We were not able to acquire it, therefore not leading any more
 							handleRevoked();
-							// Try again quickly in case the lock holder dropped it
-							Thread.sleep(LockRegistryLeaderInitiator.this.busyWaitMillis);
+							if (isRunning()) {
+								// Try again quickly in case the lock holder dropped it
+								Thread.sleep(LockRegistryLeaderInitiator.this.busyWaitMillis);
+							}
 						}
 					}
-					catch (InterruptedException e) {
+					catch (Exception e) {
 						if (this.locked) {
-							this.lock.unlock();
 							this.locked = false;
+							try {
+								this.lock.unlock();
+							}
+							catch (Exception e1) {
+								logger.debug("Could not unlock - treat as broken " + this.context +
+										". Revoking " + (isRunning() ? " and retrying..." : "..."), e1);
+
+							}
 							// The lock was broken and we are no longer leader
 							handleRevoked();
-							// Give it a chance to elect some other leader.
-							Thread.sleep(LockRegistryLeaderInitiator.this.busyWaitMillis);
+						}
+
+						if (e instanceof InterruptedException || Thread.currentThread().isInterrupted()) {
 							Thread.currentThread().interrupt();
+							if (isRunning()) {
+								logger.warn("Restarting LeaderSelector for " + this.context + " because of error.", e);
+								LockRegistryLeaderInitiator.this.future =
+										LockRegistryLeaderInitiator.this.executorService.submit(
+												() -> {
+													// Give it a chance to elect some other leader.
+													Thread.sleep(LockRegistryLeaderInitiator.this.busyWaitMillis);
+													return call();
+												});
+							}
 							return null;
+						}
+						else {
+							if (isRunning()) {
+								// Give it a chance to elect some other leader.
+								try {
+									Thread.sleep(LockRegistryLeaderInitiator.this.busyWaitMillis);
+								}
+								catch (InterruptedException e1) {
+									// Ignore interruption and let it to be caught on the next cycle.
+									Thread.currentThread().interrupt();
+								}
+							}
+							if (logger.isDebugEnabled()) {
+								logger.debug("Error acquiring the lock for " + this.context +
+										". " + (isRunning() ? "Retrying..." : ""), e);
+							}
 						}
 					}
 				}
 			}
 			finally {
 				if (this.locked) {
-					this.lock.unlock();
+					this.locked = false;
+					try {
+						this.lock.unlock();
+					}
+					catch (Exception e) {
+						logger.debug("Could not unlock during stop for " + this.context
+								+ " - treat as broken. Revoking...", e);
+					}
 					// We are stopping, therefore not leading any more
 					handleRevoked();
 				}
-				this.locked = false;
 			}
 			return null;
 		}
@@ -387,6 +493,20 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 			}
 		}
 
+		private void publishFailedToAcquire() {
+			if (LockRegistryLeaderInitiator.this.leaderEventPublisher != null) {
+				try {
+					LockRegistryLeaderInitiator.this.leaderEventPublisher.publishOnFailedToAcquire(
+							LockRegistryLeaderInitiator.this,
+							this.context,
+							LockRegistryLeaderInitiator.this.candidate.getRole());
+				}
+				catch (Exception e) {
+					logger.warn("Error publishing OnFailedToAcquire event.", e);
+				}
+			}
+		}
+
 	}
 
 	/**
@@ -405,14 +525,17 @@ public class LockRegistryLeaderInitiator implements SmartLifecycle, DisposableBe
 
 		@Override
 		public void yield() {
+			if (logger.isDebugEnabled()) {
+				logger.debug("Yielding leadership from " + this);
+			}
 			if (LockRegistryLeaderInitiator.this.future != null) {
 				LockRegistryLeaderInitiator.this.future.cancel(true);
-				if (isRunning()) {
-					LockRegistryLeaderInitiator.this.future =
-							LockRegistryLeaderInitiator.this.executorService
-									.submit(LockRegistryLeaderInitiator.this.leaderSelector);
-				}
 			}
+		}
+
+		@Override
+		public String getRole() {
+			return LockRegistryLeaderInitiator.this.candidate.getRole();
 		}
 
 		@Override

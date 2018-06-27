@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,10 +39,13 @@ import org.springframework.integration.support.management.MessageChannelMetrics;
 import org.springframework.integration.support.management.MetricsContext;
 import org.springframework.integration.support.management.Statistics;
 import org.springframework.integration.support.management.TrackableComponent;
+import org.springframework.integration.support.management.metrics.MetricsCaptor;
+import org.springframework.integration.support.management.metrics.SampleFacade;
+import org.springframework.integration.support.management.metrics.TimerFacade;
+import org.springframework.integration.support.utils.IntegrationUtils;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageDeliveryException;
-import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.util.Assert;
@@ -86,6 +89,12 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 
 	private volatile AbstractMessageChannelMetrics channelMetrics = new DefaultMessageChannelMetrics();
 
+	private MetricsCaptor metricsCaptor;
+
+	private TimerFacade successTimer;
+
+	private TimerFacade failureTimer;
+
 	public AbstractMessageChannel() {
 		this.interceptors = new ChannelInterceptorList(logger);
 	}
@@ -98,6 +107,15 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	@Override
 	public void setShouldTrack(boolean shouldTrack) {
 		this.shouldTrack = shouldTrack;
+	}
+
+	@Override
+	public void registerMetricsCaptor(MetricsCaptor metricsCaptor) {
+		this.metricsCaptor = metricsCaptor;
+	}
+
+	protected MetricsCaptor getMetricsCaptor() {
+		return this.metricsCaptor;
 	}
 
 	@Override
@@ -158,12 +176,9 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	 * payload type does not match directly, but the 'conversionService' is
 	 * available, then type conversion will be attempted in the order of the
 	 * elements provided in this array.
-	 * <p>
-	 * If this property is not set explicitly, any Message payload type will be
+	 * <p> If this property is not set explicitly, any Message payload type will be
 	 * accepted.
-	 *
 	 * @param datatypes The supported data types.
-	 *
 	 * @see #setMessageConverter(MessageConverter)
 	 */
 	public void setDatatypes(Class<?>... datatypes) {
@@ -174,7 +189,6 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	/**
 	 * Set the list of channel interceptors. This will clear any existing
 	 * interceptors.
-	 *
 	 * @param interceptors The list of interceptors.
 	 */
 	@Override
@@ -185,7 +199,6 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 
 	/**
 	 * Add a channel interceptor to the end of the list.
-	 *
 	 * @param interceptor The interceptor.
 	 */
 	@Override
@@ -195,7 +208,6 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 
 	/**
 	 * Add a channel interceptor to the specified index of the list.
-	 *
 	 * @param index The index to add interceptor.
 	 * @param interceptor The interceptor.
 	 */
@@ -208,16 +220,13 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	 * Specify the {@link MessageConverter} to use when trying to convert to
 	 * one of this channel's supported datatypes (in order) for a Message whose payload
 	 * does not already match.
-	 * <p>
-	 * <b>Note:</b> only the {@link MessageConverter#fromMessage(Message, Class)}
+	 * <p> <b>Note:</b> only the {@link MessageConverter#fromMessage(Message, Class)}
 	 * method is used. If the returned object is not a {@link Message}, the inbound
 	 * headers will be copied; if the returned object is a {@code Message}, it is
 	 * expected that the converter will have fully populated the headers; no
 	 * further action is performed by the channel. If {@code null} is returned,
 	 * conversion to the next datatype (if any) will be attempted.
-	 *
 	 * Defaults to a {@link DefaultDatatypeChannelMessageConverter}.
-	 *
 	 * @param messageConverter The message converter.
 	 */
 	public void setMessageConverter(MessageConverter messageConverter) {
@@ -244,7 +253,6 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 
 	/**
 	 * Exposes the interceptor list for subclasses.
-	 *
 	 * @return The channel interceptor list.
 	 */
 	protected ChannelInterceptorList getInterceptors() {
@@ -377,9 +385,7 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	 * Send a message on this channel. If the channel is at capacity, this
 	 * method will block until either space becomes available or the sending
 	 * thread is interrupted.
-	 *
 	 * @param message the Message to send
-	 *
 	 * @return <code>true</code> if the message is sent successfully or
 	 * <code>false</code> if the sending thread is interrupted.
 	 */
@@ -394,10 +400,8 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	 * is interrupted. If the specified timeout is 0, the method will return
 	 * immediately. If less than zero, it will block indefinitely (see
 	 * {@link #send(Message)}).
-	 *
 	 * @param message the Message to send
 	 * @param timeout the timeout in milliseconds
-	 *
 	 * @return <code>true</code> if the message is sent successfully,
 	 * <code>false</code> if the message cannot be sent within the allotted
 	 * time or the sending thread is interrupted.
@@ -417,6 +421,7 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 		boolean countsEnabled = this.countsEnabled;
 		ChannelInterceptorList interceptors = this.interceptors;
 		AbstractMessageChannelMetrics channelMetrics = this.channelMetrics;
+		SampleFacade sample = null;
 		try {
 			if (this.datatypes.length > 0) {
 				message = this.convertPayloadIfNecessary(message);
@@ -426,7 +431,7 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 				logger.debug("preSend on channel '" + this + "', message: " + message);
 			}
 			if (interceptors.getSize() > 0) {
-				interceptorStack = new ArrayDeque<ChannelInterceptor>();
+				interceptorStack = new ArrayDeque<>();
 				message = interceptors.preSend(message, this, interceptorStack);
 				if (message == null) {
 					return false;
@@ -434,11 +439,18 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 			}
 			if (countsEnabled) {
 				metrics = channelMetrics.beforeSend();
-			}
-			sent = this.doSend(message, timeout);
-			if (countsEnabled) {
+				if (this.metricsCaptor != null) {
+					sample = this.metricsCaptor.start();
+				}
+				sent = doSend(message, timeout);
+				if (sample != null) {
+					sample.stop(sendTimer(sent));
+				}
 				channelMetrics.afterSend(metrics, sent);
 				metricsProcessed = true;
+			}
+			else {
+				sent = doSend(message, timeout);
 			}
 
 			if (debugEnabled) {
@@ -452,17 +464,42 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 		}
 		catch (Exception e) {
 			if (countsEnabled && !metricsProcessed) {
+				if (sample != null) {
+					sample.stop(buildSendTimer(false, e.getClass().getSimpleName()));
+				}
 				channelMetrics.afterSend(metrics, false);
 			}
 			if (interceptorStack != null) {
 				interceptors.afterSendCompletion(message, this, sent, e, interceptorStack);
 			}
-			if (e instanceof MessagingException) {
-				throw (MessagingException) e;
-			}
-			throw new MessageDeliveryException(message,
-					"failed to send Message to channel '" + this.getComponentName() + "'", e);
+			throw IntegrationUtils.wrapInDeliveryExceptionIfNecessary(message,
+					() -> "failed to send Message to channel '" + this.getComponentName() + "'", e);
 		}
+	}
+
+	private TimerFacade sendTimer(boolean sent) {
+		if (sent) {
+			if (this.successTimer == null) {
+				this.successTimer = buildSendTimer(true, "none");
+			}
+			return this.successTimer;
+		}
+		else {
+			if (this.failureTimer == null) {
+				this.failureTimer = buildSendTimer(false, "none");
+			}
+			return this.failureTimer;
+		}
+	}
+
+	private TimerFacade buildSendTimer(boolean success, String exception) {
+		return this.metricsCaptor.timerBuilder(SEND_TIMER_NAME)
+				.tag("type", "channel")
+				.tag("name", getComponentName() == null ? "unknown" : getComponentName())
+				.tag("result", success ? "success" : "failure")
+				.tag("exception", exception)
+				.description("Send processing time")
+				.build();
 	}
 
 	private Message<?> convertPayloadIfNecessary(Message<?> message) {
@@ -501,7 +538,6 @@ public abstract class AbstractMessageChannel extends IntegrationObjectSupport
 	 * must return immediately with or without success). A negative timeout
 	 * value indicates that the method should block until either the message is
 	 * accepted or the blocking thread is interrupted.
-	 *
 	 * @param message The message.
 	 * @param timeout The timeout.
 	 * @return true if the send was successful.

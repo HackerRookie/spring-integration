@@ -103,8 +103,8 @@ Instead those Messages are passed through Redis allowing you to rely on its supp
 [[redis-inbound-channel-adapter]]
 ==== Redis Inbound Channel Adapter
 
-The Redis-based Inbound Channel Adapter adapts incoming Redis messages into Spring Integration Messages in the same way as other inbound adapters.
-It receives platform-specific messages (Redis in this case) and converts them to Spring Integration Messages using a `MessageConverter` strategy.
+The Redis-based Inbound Channel Adapter (`RedisInboundChannelAdapter`) adapts incoming Redis messages into Spring Messages in the same way as other inbound adapters.
+It receives platform-specific messages (Redis in this case) and converts them to Spring Messages using a `MessageConverter` strategy.
 [source,xml]
 ----
 <int-redis:inbound-channel-adapter id="redisAdapter"
@@ -132,13 +132,17 @@ The default is a `SimpleMessageConverter`.
 
 Inbound adapters can subscribe to multiple topic names hence the comma-delimited set of values in the `topics` attribute.
 
-Since _Spring Integration 3.0_, the Inbound Adapter, in addition to the existing `topics` attribute, now has the `topic-patterns` attribute.
+Since _version 3.0_, the Inbound Adapter, in addition to the existing `topics` attribute, now has the `topic-patterns` attribute.
 This attribute contains a comma-delimited set of Redis topic patterns.
 For more information regarding Redis publish/subscribe, see http://redis.io/topics/pubsub[Redis Pub/Sub].
 
 Inbound adapters can use a `RedisSerializer` to deserialize the body of Redis Messages.
 The `serializer` attribute of the `<int-redis:inbound-channel-adapter>` can be set to an empty string, which results in a `null` value for the `RedisSerializer` property.
 In this case the raw `byte[]` bodies of Redis Messages are provided as the message payloads.
+
+Since _version 5.0_, an `Executor` instance can be provided to the Inbound Adapter via the `task-executor` attribute of the `<int-redis:inbound-channel-adapter>`.
+Also the received Spring Integration Messages have now `RedisHeaders.MESSAGE_SOURCE` header to indicate the source of the published message - topic or pattern.
+This can be used downstream for routing logic.
 
 [[redis-outbound-channel-adapter]]
 ==== Redis Outbound Channel Adapter
@@ -354,6 +358,8 @@ RedisSerializer<Object> serializer = new GenericJackson2JsonRedisSerializer(mapp
 store.setValueSerializer(serializer);
 ----
 
+Starting with version _4.3.12_, the `RedisMessageStore` supports the key `prefix` option to allow distinguishing between instances of the store on the same Redis server.
+
 [[redis-cms]]
 ==== Redis Channel Message Stores
 
@@ -413,6 +419,8 @@ In the case of the `MetadataStore`, this `key` plays the role of a _region_, whi
 By default this `key` has the value `MetaData`.
 
 Starting with _version 4.0_, this store now implements `ConcurrentMetadataStore`, allowing it to be reliably shared across multiple application instances where only one instance will be allowed to store or modify a key's value.
+
+IMPORTANT: The `RedisMetadataStore.replace()` (for example in the `AbstractPersistentAcceptOnceFileListFilter`) can't be used with a Redis cluster since the `WATCH` command for atomicity is not currently supported.
 
 [[redis-store-inbound-channel-adapter]]
 === RedisStore Inbound Channel Adapter

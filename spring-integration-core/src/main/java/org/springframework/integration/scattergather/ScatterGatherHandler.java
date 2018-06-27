@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 the original author or authors.
+ * Copyright 2014-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@ import org.springframework.util.ClassUtils;
  * <a href="http://www.eaipatterns.com/BroadcastAggregate.html">Scatter-Gather</a> EIP pattern.
  *
  * @author Artem Bilan
+ * @author Abdul Zaheer
+ *
  * @since 4.1
  */
 public class ScatterGatherHandler extends AbstractReplyProducingMessageHandler implements Lifecycle {
@@ -145,7 +147,11 @@ public class ScatterGatherHandler extends AbstractReplyProducingMessageHandler i
 
 		Message<?> gatherResult = gatherResultChannel.receive(this.gatherTimeout);
 		if (gatherResult != null) {
-			return gatherResult;
+			return getMessageBuilderFactory()
+					.fromMessage(gatherResult)
+					.removeHeader(GATHER_RESULT_CHANNEL)
+					.setHeader(MessageHeaders.REPLY_CHANNEL, requestMessage.getHeaders().getReplyChannel())
+					.build();
 		}
 
 		return null;
@@ -161,7 +167,7 @@ public class ScatterGatherHandler extends AbstractReplyProducingMessageHandler i
 	@Override
 	public void stop() {
 		if (this.gatherEndpoint != null) {
-			this.gatherEndpoint.start();
+			this.gatherEndpoint.stop();
 		}
 	}
 

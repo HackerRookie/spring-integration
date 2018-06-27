@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,8 +46,6 @@ import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.core.GenericSelector;
 import org.springframework.integration.core.MessageProducer;
 import org.springframework.integration.core.MessageSelector;
-import org.springframework.integration.dsl.channel.MessageChannelSpec;
-import org.springframework.integration.dsl.channel.WireTapSpec;
 import org.springframework.integration.dsl.support.FixedSubscriberChannelPrototype;
 import org.springframework.integration.dsl.support.MessageChannelReference;
 import org.springframework.integration.expression.ControlBusMethodFilter;
@@ -88,6 +86,7 @@ import org.springframework.integration.transformer.HeaderFilter;
 import org.springframework.integration.transformer.MessageTransformingHandler;
 import org.springframework.integration.transformer.MethodInvokingTransformer;
 import org.springframework.integration.transformer.Transformer;
+import org.springframework.integration.util.ClassUtils;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHandler;
@@ -111,7 +110,7 @@ import reactor.util.function.Tuple2;
  *
  * @since 5.0
  *
- * @see org.springframework.integration.config.dsl.IntegrationFlowBeanPostProcessor
+ * @see org.springframework.integration.dsl.context.IntegrationFlowBeanPostProcessor
  */
 public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinition<B>> {
 
@@ -190,7 +189,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * fluent API.
 	 * @param messageChannelSpec the {@link MessageChannelSpec} to use.
 	 * @return the current {@link IntegrationFlowDefinition}.
-	 * @see org.springframework.integration.dsl.channel.MessageChannels
+	 * @see org.springframework.integration.dsl.MessageChannels
 	 */
 	public B channel(MessageChannelSpec<?, ?> messageChannelSpec) {
 		Assert.notNull(messageChannelSpec, "'messageChannelSpec' must not be null");
@@ -201,7 +200,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * Populate the provided {@link MessageChannel} instance
 	 * at the current {@link IntegrationFlow} chain position.
 	 * The {@code messageChannel} can be an existing bean, or fresh instance, in which case
-	 * the {@link org.springframework.integration.config.dsl.IntegrationFlowBeanPostProcessor}
+	 * the {@link org.springframework.integration.dsl.context.IntegrationFlowBeanPostProcessor}
 	 * will populate it as a bean with a generated name.
 	 * @param messageChannel the {@link MessageChannel} to populate.
 	 * @return the current {@link IntegrationFlowDefinition}.
@@ -336,11 +335,25 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * @return the current {@link IntegrationFlowDefinition}.
 	 */
 	public B wireTap(IntegrationFlow flow, Consumer<WireTapSpec> wireTapConfigurer) {
-		DirectChannel wireTapChannel = new DirectChannel();
-		IntegrationFlowBuilder flowBuilder = IntegrationFlows.from(wireTapChannel);
-		flow.configure(flowBuilder);
-		addComponent(flowBuilder.get());
+		MessageChannel wireTapChannel = obtainInputChannelFromFlow(flow);
+
 		return wireTap(wireTapChannel, wireTapConfigurer);
+	}
+
+	private MessageChannel obtainInputChannelFromFlow(IntegrationFlow flow) {
+		Assert.notNull(flow, "'flow' must not be null");
+		MessageChannel messageChannel = flow.getInputChannel();
+		if (messageChannel == null) {
+			messageChannel = new DirectChannel();
+			IntegrationFlowDefinition<?> flowBuilder = IntegrationFlows.from(messageChannel);
+			flow.configure(flowBuilder);
+			addComponent(flowBuilder.get());
+		}
+		else {
+			addComponent(flow);
+		}
+
+		return messageChannel;
 	}
 
 	/**
@@ -535,7 +548,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * {@link org.springframework.integration.handler.MessageProcessor} from provided {@link MessageProcessorSpec}.
 	 * <pre class="code">
 	 * {@code
-	 *  .transform(Scripts.script("classpath:myScript.py").valiable("foo", bar()))
+	 *  .transform(Scripts.script("classpath:myScript.py").variable("foo", bar()))
 	 * }
 	 * </pre>
 	 * @param messageProcessorSpec the {@link MessageProcessorSpec} to use.
@@ -552,7 +565,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * In addition accept options for the integration endpoint using {@link GenericEndpointSpec}.
 	 * <pre class="code">
 	 * {@code
-	 *  .transform(Scripts.script("classpath:myScript.py").valiable("foo", bar()),
+	 *  .transform(Scripts.script("classpath:myScript.py").variable("foo", bar()),
 	 *           e -> e.autoStartup(false))
 	 * }
 	 * </pre>
@@ -621,7 +634,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 		Transformer transformer = genericTransformer instanceof Transformer ? (Transformer) genericTransformer :
 				(isLambda(genericTransformer)
 						? new MethodInvokingTransformer(new LambdaMessageProcessor(genericTransformer, payloadType))
-						: new MethodInvokingTransformer(genericTransformer));
+						: new MethodInvokingTransformer(genericTransformer, ClassUtils.TRANSFORMER_TRANSFORM_METHOD));
 		return addComponent(transformer)
 				.handle(new MessageTransformingHandler(transformer), endpointConfigurer);
 	}
@@ -814,7 +827,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 		MessageSelector selector = genericSelector instanceof MessageSelector ? (MessageSelector) genericSelector :
 				(isLambda(genericSelector)
 						? new MethodInvokingSelector(new LambdaMessageProcessor(genericSelector, payloadType))
-						: new MethodInvokingSelector(genericSelector));
+						: new MethodInvokingSelector(genericSelector, ClassUtils.SELECTOR_ACCEPT_METHOD));
 		return this.register(new FilterEndpointSpec(new MessageFilter(selector)), endpointConfigurer);
 	}
 
@@ -1010,12 +1023,12 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 */
 	public <P> B handle(Class<P> payloadType, GenericHandler<P> handler,
 			Consumer<GenericEndpointSpec<ServiceActivatingHandler>> endpointConfigurer) {
-		ServiceActivatingHandler serviceActivatingHandler = null;
+		ServiceActivatingHandler serviceActivatingHandler;
 		if (isLambda(handler)) {
 			serviceActivatingHandler = new ServiceActivatingHandler(new LambdaMessageProcessor(handler, payloadType));
 		}
 		else {
-			serviceActivatingHandler = new ServiceActivatingHandler(handler, "handle");
+			serviceActivatingHandler = new ServiceActivatingHandler(handler, ClassUtils.HANDLER_HANDLE_METHOD);
 		}
 		return this.handle(serviceActivatingHandler, endpointConfigurer);
 	}
@@ -1286,7 +1299,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * Typically used with a Java 8 Lambda expression:
 	 * <pre class="code">
 	 * {@code
-	 *  .split(s -> s.applySequence(false).get().getT2().setDelimiters(","))
+	 *  .split(s -> s.applySequence(false).delimiters(","))
 	 * }
 	 * </pre>
 	 * @param endpointConfigurer the {@link Consumer} to provide integration endpoint options
@@ -1521,7 +1534,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 			Consumer<SplitterEndpointSpec<MethodInvokingSplitter>> endpointConfigurer) {
 		MethodInvokingSplitter split = isLambda(splitter)
 				? new MethodInvokingSplitter(new LambdaMessageProcessor(splitter, payloadType))
-				: new MethodInvokingSplitter(splitter);
+				: new MethodInvokingSplitter(splitter, ClassUtils.FUNCTION_APPLY_METHOD);
 		return this.split(split, endpointConfigurer);
 	}
 
@@ -1921,7 +1934,7 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 			Consumer<RouterSpec<T, MethodInvokingRouter>> routerConfigurer) {
 		MethodInvokingRouter methodInvokingRouter = isLambda(router)
 				? new MethodInvokingRouter(new LambdaMessageProcessor(router, payloadType))
-				: new MethodInvokingRouter(router);
+				: new MethodInvokingRouter(router, ClassUtils.FUNCTION_APPLY_METHOD);
 		return route(new RouterSpec<>(methodInvokingRouter), routerConfigurer);
 	}
 
@@ -1973,7 +1986,16 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 
 		BridgeHandler bridgeHandler = new BridgeHandler();
 		boolean registerSubflowBridge = false;
-		Map<Object, String> componentsToRegister = routerSpec.getComponentsToRegister();
+
+		Map<Object, String> componentsToRegister = null;
+		Map<Object, String> routerComponents = routerSpec.getComponentsToRegister();
+		if (routerComponents != null) {
+			componentsToRegister = new LinkedHashMap<>(routerComponents);
+			routerComponents.clear();
+		}
+
+		register(routerSpec, null);
+
 		if (!CollectionUtils.isEmpty(componentsToRegister)) {
 			for (Map.Entry<Object, String> entry : componentsToRegister.entrySet()) {
 				Object component = entry.getKey();
@@ -1990,12 +2012,6 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 				}
 			}
 		}
-
-		if (componentsToRegister != null) {
-			componentsToRegister.clear();
-		}
-
-		register(routerSpec, null);
 
 		if (routerSpec.isDefaultToParentFlow()) {
 			routerSpec.defaultOutputChannel(new FixedSubscriberChannel(bridgeHandler));
@@ -2163,11 +2179,8 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 	 * @return the current {@link IntegrationFlowDefinition}.
 	 */
 	public B gateway(IntegrationFlow flow, Consumer<GatewayEndpointSpec> endpointConfigurer) {
-		Assert.notNull(flow, "'flow' must not be null");
-		final DirectChannel requestChannel = new DirectChannel();
-		IntegrationFlowBuilder flowBuilder = IntegrationFlows.from(requestChannel);
-		flow.configure(flowBuilder);
-		addComponent(flowBuilder.get());
+		MessageChannel requestChannel = obtainInputChannelFromFlow(flow);
+
 		return gateway(requestChannel, endpointConfigurer);
 	}
 
@@ -2699,9 +2712,9 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 		if (this.integrationFlow == null) {
 			if (this.currentMessageChannel instanceof FixedSubscriberChannelPrototype) {
 				throw new BeanCreationException("The 'currentMessageChannel' (" + this.currentMessageChannel
-						+ ") is a prototype for FixedSubscriberChannel which can't be created without MessageHandler "
+						+ ") is a prototype for 'FixedSubscriberChannel' which can't be created without 'MessageHandler' "
 						+ "constructor argument. That means that '.fixedSubscriberChannel()' can't be the last "
-						+ "EIP-method in the IntegrationFlow definition.");
+						+ "EIP-method in the 'IntegrationFlow' definition.");
 			}
 
 			if (this.integrationComponents.size() == 1) {
@@ -2742,9 +2755,6 @@ public abstract class IntegrationFlowDefinition<B extends IntegrationFlowDefinit
 			return target;
 		}
 		Advised advised = (Advised) target;
-		if (advised.getTargetSource() == null) {
-			return null;
-		}
 		try {
 			return extractProxyTarget(advised.getTargetSource().getTarget());
 		}

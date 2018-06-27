@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,15 +27,14 @@ import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.commons.logging.LogFactory;
 import org.junit.Rule;
 import org.junit.Test;
 
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.integration.ip.IpHeaders;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.messaging.Message;
@@ -43,6 +42,8 @@ import org.springframework.messaging.Message;
 /**
  * @author Mark Fisher
  * @author Gary Russell
+ * @author Artem Bilan
+ *
  * @since 2.0
  */
 public class DatagramPacketMulticastSendingHandlerTests {
@@ -73,8 +74,6 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				InetAddress group = InetAddress.getByName(multicastAddress);
 				socket1.joinGroup(group);
 				listening.countDown();
-				LogFactory.getLog(getClass())
-					.debug(Thread.currentThread().getName() + " waiting for packet");
 				socket1.receive(receivedPacket);
 				socket1.close();
 				byte[] src = receivedPacket.getData();
@@ -83,8 +82,6 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				byte[] dest = new byte[length];
 				System.arraycopy(src, offset, dest, 0, length);
 				assertEquals(payload, new String(dest));
-				LogFactory.getLog(getClass())
-					.debug(Thread.currentThread().getName() + " received packet");
 				received.countDown();
 			}
 			catch (Exception e) {
@@ -92,7 +89,7 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				e.printStackTrace();
 			}
 		};
-		Executor executor = Executors.newFixedThreadPool(2);
+		Executor executor = new SimpleAsyncTaskExecutor();
 		executor.execute(catcher);
 		executor.execute(catcher);
 		assertTrue(listening.await(10000, TimeUnit.MILLISECONDS));
@@ -135,7 +132,6 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				socket1.joinGroup(group);
 				listening.countDown();
 				assertTrue(ackListening.await(10, TimeUnit.SECONDS));
-				LogFactory.getLog(getClass()).debug(Thread.currentThread().getName() + " waiting for packet");
 				socket1.receive(receivedPacket);
 				socket1.close();
 				byte[] src = receivedPacket.getData();
@@ -144,7 +140,6 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				byte[] dest = new byte[6];
 				System.arraycopy(src, offset + length - 6, dest, 0, 6);
 				assertEquals(payload, new String(dest));
-				LogFactory.getLog(getClass()).debug(Thread.currentThread().getName() + " received packet");
 				DatagramPacketMessageMapper mapper = new DatagramPacketMessageMapper();
 				mapper.setAcknowledge(true);
 				mapper.setLengthCheck(true);
@@ -152,11 +147,9 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				Object id = message.getHeaders().get(IpHeaders.ACK_ID);
 				byte[] ack = id.toString().getBytes();
 				DatagramPacket ackPack = new DatagramPacket(ack, ack.length,
-											new InetSocketAddress(multicastRule.getNic(), ackPort.get()));
+						new InetSocketAddress(multicastRule.getNic(), ackPort.get()));
 				DatagramSocket out = new DatagramSocket();
 				out.send(ackPack);
-				LogFactory.getLog(getClass()).debug(Thread.currentThread().getName() + " sent ack to "
-						+ ackPack.getSocketAddress());
 				out.close();
 				ackSent.countDown();
 				socket1.close();
@@ -166,12 +159,12 @@ public class DatagramPacketMulticastSendingHandlerTests {
 				e.printStackTrace();
 			}
 		};
-		Executor executor = Executors.newFixedThreadPool(2);
+		Executor executor = new SimpleAsyncTaskExecutor();
 		executor.execute(catcher);
 		executor.execute(catcher);
 		assertTrue(listening.await(10000, TimeUnit.MILLISECONDS));
 		MulticastSendingMessageHandler handler =
-			new MulticastSendingMessageHandler(multicastAddress, testPort, true, true, "localhost", 0, 10000);
+				new MulticastSendingMessageHandler(multicastAddress, testPort, true, true, "localhost", 0, 10000);
 		handler.setLocalAddress(this.multicastRule.getNic());
 		handler.setMinAcksForSuccess(2);
 		handler.setBeanFactory(mock(BeanFactory.class));

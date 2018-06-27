@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,9 +75,11 @@ import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.context.IntegrationProperties;
+import org.springframework.integration.handler.AbstractReplyProducingMessageHandler;
 import org.springframework.integration.handler.BridgeHandler;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.test.util.TestUtils;
+import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHandler;
@@ -86,7 +88,7 @@ import org.springframework.messaging.PollableChannel;
 import org.springframework.messaging.SubscribableChannel;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
+import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.scheduling.annotation.AsyncResult;
 import org.springframework.stereotype.Component;
@@ -486,6 +488,26 @@ public class GatewayInterfaceTests {
 		((SubscribableChannel) this.errorChannel).unsubscribe(messageHandler);
 	}
 
+	@Test
+	public void testGatewayWithNoArgsMethod() {
+		ConfigurableApplicationContext ac =
+				new ClassPathXmlApplicationContext("GatewayInterfaceTests-context.xml", getClass());
+
+		DirectChannel channel = ac.getBean("requestChannelBar", DirectChannel.class);
+		channel.subscribe(new AbstractReplyProducingMessageHandler() {
+
+			@Override
+			protected Object handleRequestMessage(Message<?> requestMessage) {
+				assertEquals("foo", requestMessage.getPayload());
+				return "FOO";
+			}
+
+		});
+
+		NoArgumentsGateway noArgumentsGateway = ac.getBean(NoArgumentsGateway.class);
+		assertEquals("FOO", noArgumentsGateway.pullData());
+		ac.close();
+	}
 
 	public interface Foo {
 
@@ -519,11 +541,18 @@ public class GatewayInterfaceTests {
 		void baz(String payload);
 	}
 
+	public interface NoArgumentsGateway {
+
+		String pullData();
+	}
+
 	public static class BazMapper implements MethodArgsMessageMapper {
 
 		@Override
-		public Message<?> toMessage(MethodArgsHolder object) throws Exception {
-			return MessageBuilder.withPayload("fizbuz").build();
+		public Message<?> toMessage(MethodArgsHolder object, @Nullable Map<String, Object> headers) throws Exception {
+			return MessageBuilder.withPayload("fizbuz")
+					.copyHeadersIfAbsent(headers)
+					.build();
 		}
 
 	}
@@ -565,7 +594,7 @@ public class GatewayInterfaceTests {
 		@BridgeTo
 		public MessageChannel gatewayThreadChannel() {
 			DirectChannel channel = new DirectChannel();
-			channel.addInterceptor(new ChannelInterceptorAdapter() {
+			channel.addInterceptor(new ChannelInterceptor() {
 
 				@Override
 				public Message<?> preSend(Message<?> message, MessageChannel channel) {

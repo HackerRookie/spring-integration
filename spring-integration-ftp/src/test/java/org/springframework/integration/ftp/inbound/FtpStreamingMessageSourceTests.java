@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import java.io.InputStream;
 import java.util.Comparator;
 
 import org.apache.commons.net.ftp.FTPFile;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -46,6 +47,7 @@ import org.springframework.integration.ftp.FtpTestSupport;
 import org.springframework.integration.ftp.session.FtpFileInfo;
 import org.springframework.integration.ftp.session.FtpRemoteFileTemplate;
 import org.springframework.integration.scheduling.PollerMetadata;
+import org.springframework.integration.test.rule.Log4j2LevelAdjuster;
 import org.springframework.integration.transformer.StreamTransformer;
 import org.springframework.messaging.Message;
 import org.springframework.scheduling.support.PeriodicTrigger;
@@ -55,6 +57,7 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 /**
  * @author Gary Russell
  * @author Artem Bilan
+ *
  * @since 4.3
  *
  */
@@ -70,6 +73,11 @@ public class FtpStreamingMessageSourceTests extends FtpTestSupport {
 
 	@Autowired
 	private SourcePollingChannelAdapter adapter;
+
+	@Rule
+	public Log4j2LevelAdjuster adjuster =
+			Log4j2LevelAdjuster.debug()
+					.categories(true, "org.apache.commons");
 
 	@SuppressWarnings("unchecked")
 	@Test

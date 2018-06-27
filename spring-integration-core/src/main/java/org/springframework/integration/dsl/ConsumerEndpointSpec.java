@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,10 +56,6 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 
 	protected ConsumerEndpointSpec(H messageHandler) {
 		super(messageHandler);
-		this.endpointFactoryBean.setAdviceChain(this.adviceChain);
-		if (messageHandler instanceof AbstractReplyProducingMessageHandler) {
-			((AbstractReplyProducingMessageHandler) messageHandler).setAdviceChain(this.adviceChain);
-		}
 	}
 
 	@Override
@@ -77,6 +73,12 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 	@Override
 	public S poller(PollerMetadata pollerMetadata) {
 		this.endpointFactoryBean.setPollerMetadata(pollerMetadata);
+		return _this();
+	}
+
+	@Override
+	public S role(String role) {
+		this.endpointFactoryBean.setRole(role);
 		return _this();
 	}
 
@@ -181,7 +183,7 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 			((AbstractReplyProducingMessageHandler) this.handler).setRequiresReply(requiresReply);
 		}
 		else {
-			logger.warn("'requiresReply' can be applied only for AbstractReplyProducingMessageHandler");
+			this.logger.warn("'requiresReply' can be applied only for AbstractReplyProducingMessageHandler");
 		}
 		return _this();
 	}
@@ -201,7 +203,7 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 			((AbstractMessageRouter) this.handler).setSendTimeout(sendTimeout);
 		}
 		else {
-			logger.warn("'sendTimeout' can be applied only for AbstractMessageProducingHandler");
+			this.logger.warn("'sendTimeout' can be applied only for AbstractMessageProducingHandler");
 		}
 		return _this();
 	}
@@ -217,7 +219,7 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 			((AbstractMessageHandler) this.handler).setOrder(order);
 		}
 		else {
-			logger.warn("'order' can be applied only for AbstractMessageHandler");
+			this.logger.warn("'order' can be applied only for AbstractMessageHandler");
 		}
 		return _this();
 	}
@@ -238,13 +240,36 @@ public abstract class ConsumerEndpointSpec<S extends ConsumerEndpointSpec<S, H>,
 			((AbstractMessageProducingHandler) this.handler).setAsync(async);
 		}
 		else {
-			logger.warn("'async' can be applied only for AbstractMessageProducingHandler");
+			this.logger.warn("'async' can be applied only for AbstractMessageProducingHandler");
+		}
+		return _this();
+	}
+
+	/**
+	 * Set header patterns ("xxx*", "*xxx", "*xxx*" or "xxx*yyy")
+	 * that will NOT be copied from the inbound message.
+	 * At least one pattern as "*" means do not copy headers at all.
+	 * @param headerPatterns the headers to not propagate from the inbound message.
+	 * @return the endpoint spec.
+	 * @see AbstractMessageProducingHandler#setNotPropagatedHeaders(String...)
+	 */
+	public S notPropagatedHeaders(String... headerPatterns) {
+		assertHandler();
+		if (this.handler instanceof AbstractMessageProducingHandler) {
+			((AbstractMessageProducingHandler) this.handler).setNotPropagatedHeaders(headerPatterns);
+		}
+		else {
+			this.logger.warn("'headerPatterns' can be applied only for AbstractMessageProducingHandler");
 		}
 		return _this();
 	}
 
 	@Override
 	protected Tuple2<ConsumerEndpointFactoryBean, H> doGet() {
+		this.endpointFactoryBean.setAdviceChain(this.adviceChain);
+		if (this.handler instanceof AbstractReplyProducingMessageHandler && !this.adviceChain.isEmpty()) {
+			((AbstractReplyProducingMessageHandler) this.handler).setAdviceChain(this.adviceChain);
+		}
 		this.endpointFactoryBean.setHandler(this.handler);
 		return super.doGet();
 	}

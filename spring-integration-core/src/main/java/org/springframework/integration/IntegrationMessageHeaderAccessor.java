@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2017 the original author or authors.
+ * Copyright 2013-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.springframework.integration.acks.AcknowledgmentCallback;
+import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.support.MessageHeaderAccessor;
@@ -35,7 +38,7 @@ import org.springframework.util.ObjectUtils;
  *
  * @author Andy Wilkinson
  * @author Artem Bilan
- * @author Gary Russel
+ * @author Gary Russell
  *
  * @since 4.0
  *
@@ -60,6 +63,10 @@ public class IntegrationMessageHeaderAccessor extends MessageHeaderAccessor {
 
 	public static final String CLOSEABLE_RESOURCE = "closeableResource";
 
+	public static final String DELIVERY_ATTEMPT = "deliveryAttempt";
+
+	public static final String ACKNOWLEDGMENT_CALLBACK = "acknowledgmentCallback";
+
 	private Set<String> readOnlyHeaders = new HashSet<String>();
 
 	public IntegrationMessageHeaderAccessor(Message<?> message) {
@@ -81,26 +88,30 @@ public class IntegrationMessageHeaderAccessor extends MessageHeaderAccessor {
 		}
 	}
 
+	@Nullable
 	public Long getExpirationDate() {
 		return this.getHeader(EXPIRATION_DATE, Long.class);
 	}
 
+	@Nullable
 	public Object getCorrelationId() {
 		return this.getHeader(CORRELATION_ID);
 	}
 
-	public Integer getSequenceNumber() {
-		Integer sequenceNumber = this.getHeader(SEQUENCE_NUMBER, Integer.class);
-		return (sequenceNumber != null ? sequenceNumber : 0);
+	public int getSequenceNumber() {
+		Number sequenceNumber = this.getHeader(SEQUENCE_NUMBER, Number.class);
+		return (sequenceNumber != null ? sequenceNumber.intValue() : 0);
 	}
 
-	public Integer getSequenceSize() {
-		Integer sequenceSize = this.getHeader(SEQUENCE_SIZE, Integer.class);
-		return (sequenceSize != null ? sequenceSize : 0);
+	public int getSequenceSize() {
+		Number sequenceSize = this.getHeader(SEQUENCE_SIZE, Number.class);
+		return (sequenceSize != null ? sequenceSize.intValue() : 0);
 	}
 
+	@Nullable
 	public Integer getPriority() {
-		return this.getHeader(PRIORITY, Integer.class);
+		Number priority = this.getHeader(PRIORITY, Number.class);
+		return (priority != null ? priority.intValue() : null);
 	}
 
 	/**
@@ -112,11 +123,33 @@ public class IntegrationMessageHeaderAccessor extends MessageHeaderAccessor {
 	 * @return the {@link Closeable}.
 	 * @since 4.3
 	 */
+	@Nullable
 	public Closeable getCloseableResource() {
-		return this.getHeader(CLOSEABLE_RESOURCE, Closeable.class);
+		return getHeader(CLOSEABLE_RESOURCE, Closeable.class);
+	}
+
+	/**
+	 * Return the acknowledgment callback, if present.
+	 * @return the callback.
+	 * @since 5.0.1
+	 */
+	public AcknowledgmentCallback getAcknowledgmentCallback() {
+		return getHeader(ACKNOWLEDGMENT_CALLBACK, AcknowledgmentCallback.class);
+	}
+
+	/**
+	 * When a message-driven enpoint supports retry implicitly, this
+	 * header is incremented for each delivery attempt.
+	 * @return the delivery attempt.
+	 * @since 5.0.1
+	 */
+	@Nullable
+	public AtomicInteger getDeliveryAttempt() {
+		return this.getHeader(DELIVERY_ATTEMPT, AtomicInteger.class);
 	}
 
 	@SuppressWarnings("unchecked")
+	@Nullable
 	public <T> T getHeader(String key, Class<T> type) {
 		Object value = getHeader(key);
 		if (value == null) {
@@ -140,8 +173,8 @@ public class IntegrationMessageHeaderAccessor extends MessageHeaderAccessor {
 			else if (IntegrationMessageHeaderAccessor.SEQUENCE_NUMBER.equals(headerName)
 					|| IntegrationMessageHeaderAccessor.SEQUENCE_SIZE.equals(headerName)
 					|| IntegrationMessageHeaderAccessor.PRIORITY.equals(headerName)) {
-				Assert.isTrue(Integer.class.isAssignableFrom(headerValue.getClass()), "The '" + headerName
-						+ "' header value must be an Integer.");
+				Assert.isTrue(Number.class.isAssignableFrom(headerValue.getClass()), "The '" + headerName
+						+ "' header value must be a Number.");
 			}
 			else if (IntegrationMessageHeaderAccessor.ROUTING_SLIP.equals(headerName)) {
 				Assert.isTrue(Map.class.isAssignableFrom(headerValue.getClass()), "The '" + headerName

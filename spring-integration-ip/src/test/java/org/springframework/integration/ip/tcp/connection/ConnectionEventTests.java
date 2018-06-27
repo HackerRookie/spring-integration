@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,11 +70,10 @@ import org.springframework.messaging.MessageHandlingException;
 import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.support.GenericMessage;
 import org.springframework.messaging.support.MessageBuilder;
-import org.springframework.util.SocketUtils;
 
 /**
  * @author Gary Russell
- * @author Artyem Bilan
+ * @author Artem Bilan
  *
  * @since 3.0
  *
@@ -131,16 +130,14 @@ public class ConnectionEventTests {
 
 	@Test
 	public void testNetServerExceptionEvent() throws Exception {
-		int port = SocketUtils.findAvailableTcpPort();
-		AbstractServerConnectionFactory factory = new TcpNetServerConnectionFactory(port);
-		testServerExceptionGuts(port, factory);
+		AbstractServerConnectionFactory factory = new TcpNetServerConnectionFactory(0);
+		testServerExceptionGuts(factory);
 	}
 
 	@Test
 	public void testNioServerExceptionEvent() throws Exception {
-		int port = SocketUtils.findAvailableTcpPort();
-		AbstractServerConnectionFactory factory = new TcpNioServerConnectionFactory(port);
-		testServerExceptionGuts(port, factory);
+		AbstractServerConnectionFactory factory = new TcpNioServerConnectionFactory(0);
+		testServerExceptionGuts(factory);
 	}
 
 	@Test
@@ -219,6 +216,8 @@ public class ConnectionEventTests {
 		TcpConnectionFailedCorrelationEvent event = (TcpConnectionFailedCorrelationEvent) theEvent.get();
 		assertEquals("bar", event.getConnectionId());
 		assertSame(message, ((MessagingException) event.getCause()).getFailedMessage());
+		gw.stop();
+		scf.stop();
 	}
 
 	@Test
@@ -263,16 +262,19 @@ public class ConnectionEventTests {
 		messagingException = (MessagingException) event.getCause();
 		assertSame(message, messagingException.getFailedMessage());
 		assertEquals("Cannot correlate response - no connection id", messagingException.getMessage());
+		gw.stop();
+		ccf.stop();
 	}
 
-	private void testServerExceptionGuts(int port, AbstractServerConnectionFactory factory) throws Exception {
+	private void testServerExceptionGuts(AbstractServerConnectionFactory factory) throws Exception {
 		ServerSocket ss = null;
 		try {
-			ss = ServerSocketFactory.getDefault().createServerSocket(port);
+			ss = ServerSocketFactory.getDefault().createServerSocket(0);
 		}
 		catch (Exception e) {
-			return; // skip this test, someone grabbed the port
+			fail("Failed to get a server socket");
 		}
+		factory.setPort(ss.getLocalPort());
 		final AtomicReference<TcpConnectionServerExceptionEvent> theEvent =
 				new AtomicReference<TcpConnectionServerExceptionEvent>();
 		final CountDownLatch latch = new CountDownLatch(1);
@@ -301,20 +303,33 @@ public class ConnectionEventTests {
 		String actual = theEvent.toString();
 		assertThat(actual, containsString("cause=java.net.BindException"));
 		assertThat(actual, containsString("source="
-				+ "sf, port=" + port));
+				+ "sf, port=" + factory.getPort()));
 
 		ArgumentCaptor<String> reasonCaptor = ArgumentCaptor.forClass(String.class);
 		ArgumentCaptor<Throwable> throwableCaptor = ArgumentCaptor.forClass(Throwable.class);
 		verify(logger).error(reasonCaptor.capture(), throwableCaptor.capture());
 		assertThat(reasonCaptor.getValue(), startsWith("Error on Server"));
-		assertThat(reasonCaptor.getValue(), endsWith("; port = " + port));
+		assertThat(reasonCaptor.getValue(), endsWith("; port = " + factory.getPort()));
 		assertThat(throwableCaptor.getValue(), instanceOf(BindException.class));
 		ss.close();
 	}
 
 	@Test
 	public void testFailConnect() {
-		TcpNetClientConnectionFactory ccf = new TcpNetClientConnectionFactory("junkjunk", 1234);
+		AbstractClientConnectionFactory ccf = new AbstractClientConnectionFactory("junkjunk", 1234) {
+
+			@Override
+			protected boolean isActive() {
+				return true;
+			}
+
+			@Override
+			protected TcpConnectionSupport buildNewConnection() throws Exception {
+				throw new UnknownHostException("Mocking for test ");
+			}
+
+		};
+
 		final AtomicReference<ApplicationEvent> failEvent = new AtomicReference<ApplicationEvent>();
 		ccf.setApplicationEventPublisher(new ApplicationEventPublisher() {
 
@@ -338,6 +353,8 @@ public class ConnectionEventTests {
 			TcpConnectionFailedEvent event = (TcpConnectionFailedEvent) failEvent.get();
 			assertSame(e, event.getCause());
 		}
+
+		ccf.stop();
 	}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,13 +31,19 @@ import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.mock;
 
 import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import org.aopalliance.intercept.MethodInterceptor;
 import org.apache.commons.logging.Log;
@@ -53,23 +59,35 @@ import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.DirectFieldAccessor;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.expression.Expression;
 import org.springframework.expression.spel.SpelCompilerMode;
 import org.springframework.expression.spel.SpelEvaluationException;
 import org.springframework.expression.spel.SpelParserConfiguration;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
+import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.integration.annotation.UseSpelInvoker;
+import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.gateway.GatewayProxyFactoryBean;
 import org.springframework.integration.gateway.RequestReplyExchanger;
+import org.springframework.integration.handler.support.MessagingMethodInvokerHelper;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.test.util.TestUtils;
-import org.springframework.integration.util.MessagingMethodInvokerHelper;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHandler;
 import org.springframework.messaging.MessageHandlingException;
+import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.handler.annotation.Header;
+import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.support.GenericMessage;
 import org.springframework.util.StopWatch;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 
 /**
@@ -804,6 +822,42 @@ public class MethodInvokingMessageProcessorTests {
 	}
 
 	@Test
+	public void testProxyAndHeaderAnnotation() {
+		final AtomicReference<Object> payloadReference = new AtomicReference<>();
+		final AtomicReference<UUID> idReference = new AtomicReference<>();
+
+		class MyHandler {
+
+			public void handle(@Header(MessageHeaders.ID) UUID id, @Payload Object payload) {
+				idReference.set(id);
+				payloadReference.set(payload);
+			}
+
+		}
+
+		MyHandler service = new MyHandler();
+
+		final AtomicBoolean adviceCalled = new AtomicBoolean();
+		ProxyFactory proxyFactory = new ProxyFactory(service);
+		proxyFactory.addAdvice((MethodInterceptor) i -> {
+			adviceCalled.set(true);
+			return i.proceed();
+		});
+		service = (MyHandler) proxyFactory.getProxy(getClass().getClassLoader());
+
+
+		GenericMessage<String> testMessage = new GenericMessage<>("foo");
+
+		MethodInvokingMessageProcessor processor = new MethodInvokingMessageProcessor(service, "handle");
+
+		processor.processMessage(testMessage);
+
+		assertEquals(testMessage.getPayload(), payloadReference.get());
+		assertEquals(testMessage.getHeaders().getId(), idReference.get());
+		assertTrue(adviceCalled.get());
+	}
+
+	@Test
 	public void testUseSpelInvoker() throws Exception {
 		UseSpelInvokerBean bean = new UseSpelInvokerBean();
 		MessagingMethodInvokerHelper<?> helper = new MessagingMethodInvokerHelper<>(bean,
@@ -852,7 +906,7 @@ public class MethodInvokingMessageProcessorTests {
 		catch (IllegalArgumentException e) {
 			assertThat(e.getMessage(), equalTo(
 					"UseSpelInvoker.compilerMode: Object of class [java.lang.Object] "
-					+ "must be an instance of class java.lang.String"));
+							+ "must be an instance of class java.lang.String"));
 		}
 
 		// Check other CTORs
@@ -865,6 +919,175 @@ public class MethodInvokingMessageProcessorTests {
 		helper.process(message);
 		assertEquals(SpelCompilerMode.MIXED,
 				TestUtils.getPropertyValue(helper, "handlerMethod.expression.configuration.compilerMode"));
+	}
+
+	@Test
+	public void testSingleMethodJson() throws Exception {
+		SingleMethodJsonWithSpELBean bean = new SingleMethodJsonWithSpELBean();
+		MessagingMethodInvokerHelper<?> helper = new MessagingMethodInvokerHelper<>(bean,
+				SingleMethodJsonWithSpELBean.class.getDeclaredMethod("foo",
+						SingleMethodJsonWithSpELBean.Foo.class),
+				false);
+		Message<?> message = new GenericMessage<>("{\"bar\":\"bar\"}",
+				Collections.singletonMap(MessageHeaders.CONTENT_TYPE, "application/json"));
+		helper.process(message);
+		assertThat(bean.foo.bar, equalTo("bar"));
+	}
+
+	@Test
+	public void testSingleMethodBadJson() throws Exception {
+		SingleMethodJsonWithSpELMessageWildBean bean = new SingleMethodJsonWithSpELMessageWildBean();
+		MessagingMethodInvokerHelper<?> helper = new MessagingMethodInvokerHelper<>(bean,
+				SingleMethodJsonWithSpELMessageWildBean.class.getDeclaredMethod("foo", Message.class), false);
+		Message<?> message = new GenericMessage<>("baz",
+				Collections.singletonMap(MessageHeaders.CONTENT_TYPE, "application/json"));
+		helper.process(message);
+		assertThat(bean.foo.getPayload(), equalTo("baz"));
+	}
+
+	@Test
+	public void testSingleMethodJsonMessageFoo() throws Exception {
+		SingleMethodJsonWithSpELMessageFooBean bean = new SingleMethodJsonWithSpELMessageFooBean();
+		MessagingMethodInvokerHelper<?> helper = new MessagingMethodInvokerHelper<>(bean,
+				SingleMethodJsonWithSpELMessageFooBean.class.getDeclaredMethod("foo", Message.class), false);
+		Message<?> message = new GenericMessage<>("{\"bar\":\"bar\"}",
+				Collections.singletonMap(MessageHeaders.CONTENT_TYPE, "application/json"));
+		helper.process(message);
+		assertThat(bean.foo.getPayload().bar, equalTo("bar"));
+	}
+
+	@Test
+	public void testSingleMethodJsonMessageWild() throws Exception {
+		SingleMethodJsonWithSpELMessageWildBean bean = new SingleMethodJsonWithSpELMessageWildBean();
+		MessagingMethodInvokerHelper<?> helper = new MessagingMethodInvokerHelper<>(bean,
+				SingleMethodJsonWithSpELMessageWildBean.class.getDeclaredMethod("foo", Message.class), false);
+		Message<?> message = new GenericMessage<>("{\"bar\":\"baz\"}",
+				Collections.singletonMap(MessageHeaders.CONTENT_TYPE, "application/json"));
+		helper.process(message);
+		assertThat(bean.foo.getPayload(), instanceOf(Map.class));
+		assertThat(((Map<?, ?>) bean.foo.getPayload()).get("bar"), equalTo("baz"));
+	}
+
+	@Test
+	public void testCompiledSpELForProxy() {
+		Foo foo = new FooImpl();
+
+		foo = (Foo) new ProxyFactory(foo).getProxy();
+
+		SpelExpressionParser expressionParser =
+				new SpelExpressionParser(new SpelParserConfiguration(SpelCompilerMode.IMMEDIATE, null));
+
+		Expression expression = expressionParser.parseExpression("#target.handle(#root)");
+
+		StandardEvaluationContext evaluationContext = new StandardEvaluationContext();
+		evaluationContext.setVariable("target", foo);
+
+		expression.getValue(evaluationContext, "foo", String.class); // Twice to make a compiler to work
+		String result = expression.getValue(evaluationContext, "foo", String.class);
+
+		assertEquals("FOO", result);
+	}
+
+
+	@Test
+	public void testCollectionArgument() throws JsonProcessingException {
+
+		class A {
+
+			@SuppressWarnings("unused")
+			public String myMethod(List<Employee<Person>> msg) {
+				return msg.stream()
+						.map(Employee::getEntity)
+						.map(Person::getName)
+						.collect(Collectors.joining(","));
+			}
+
+		}
+
+		ApplicationContext applicationContext = new AnnotationConfigApplicationContext(TestConfiguration.class);
+
+		MethodInvokingMessageProcessor processor = new MethodInvokingMessageProcessor(new A(), "myMethod");
+		processor.setBeanFactory(applicationContext);
+
+		List<Employee<Person>> testData =
+				Arrays.asList(
+						new Employee<>(new Person("Foo")),
+						new Employee<>(new Person("Bar")));
+
+		ObjectMapper objectMapper = new ObjectMapper();
+		byte[] value = objectMapper.writeValueAsBytes(testData);
+
+		Message<?> testMessage =
+				MessageBuilder.withPayload(value)
+						.setHeader(MessageHeaders.CONTENT_TYPE, "application/json")
+						.build();
+
+		String result = (String) processor.processMessage(testMessage);
+
+		assertEquals("Foo,Bar", result);
+	}
+
+	public static class Employee<T> {
+
+		private T entity;
+
+		public Employee() {
+		}
+
+		public Employee(T entity) {
+			this.entity = entity;
+		}
+
+		public void setEntity(T entity) {
+			this.entity = entity;
+		}
+
+		public T getEntity() {
+			return this.entity;
+		}
+
+	}
+
+	public static class Person {
+
+		private String name;
+
+		public Person() {
+		}
+
+		public Person(String name) {
+			this.name = name;
+		}
+
+		public void setName(String name) {
+			this.name = name;
+		}
+
+		public String getName() {
+			return this.name;
+		}
+
+	}
+
+	@Configuration
+	@EnableIntegration
+	public static class TestConfiguration {
+
+	}
+
+	public interface Foo {
+
+		String handle(String payload);
+
+	}
+
+	public class FooImpl implements Foo {
+
+		@Override
+		public String handle(String payload) {
+			return payload.toUpperCase();
+		}
+
 	}
 
 	private DirectFieldAccessor compileImmediate(MethodInvokingMessageProcessor processor) {
@@ -1143,6 +1366,89 @@ public class MethodInvokingMessageProcessorTests {
 		@UseSpelInvoker("#{new Object()}")
 		public void buz(String buz) {
 			// empty
+		}
+
+	}
+
+	public static class SingleMethodJsonWithSpELBean {
+
+		private Foo foo;
+
+		private final CountDownLatch latch = new CountDownLatch(1);
+
+		@ServiceActivator(inputChannel = "foo")
+		@UseSpelInvoker
+		public void foo(Foo foo) {
+			this.foo = foo;
+			this.latch.countDown();
+		}
+
+		public static class Foo {
+
+			private String bar;
+
+			public String getBar() {
+				return this.bar;
+			}
+
+			public void setBar(String bar) {
+				this.bar = bar;
+			}
+
+			@Override
+			public String toString() {
+				return "Foo [bar=" + this.bar + "]";
+			}
+
+		}
+
+	}
+
+	public static class SingleMethodJsonWithSpELMessageFooBean {
+
+		private Message<Foo> foo;
+
+		private final CountDownLatch latch = new CountDownLatch(1);
+
+		@ServiceActivator(inputChannel = "foo")
+		@UseSpelInvoker
+		public void foo(Message<Foo> foo) {
+			this.foo = foo;
+			this.latch.countDown();
+		}
+
+		public static class Foo {
+
+			private String bar;
+
+			public String getBar() {
+				return this.bar;
+			}
+
+			public void setBar(String bar) {
+				this.bar = bar;
+			}
+
+			@Override
+			public String toString() {
+				return "Foo [bar=" + this.bar + "]";
+			}
+
+		}
+
+	}
+
+	public static class SingleMethodJsonWithSpELMessageWildBean {
+
+		private Message<?> foo;
+
+		private final CountDownLatch latch = new CountDownLatch(1);
+
+		@ServiceActivator(inputChannel = "foo")
+		@UseSpelInvoker
+		public void foo(Message<?> foo) {
+			this.foo = foo;
+			this.latch.countDown();
 		}
 
 	}

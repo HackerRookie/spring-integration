@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 import org.springframework.beans.SimpleTypeConverter;
@@ -77,7 +78,7 @@ public class BeanFactoryTypeConverterTests {
 	@Test
 	public void testEmptyCollectionConversion() {
 		BeanFactoryTypeConverter typeConverter = new BeanFactoryTypeConverter();
-		List<String> sourceObject = new ArrayList<String>();
+		List<String> sourceObject = new ArrayList<>();
 		ArrayList<BeanFactoryTypeConverterTests> convertedCollection =
 			(ArrayList<BeanFactoryTypeConverterTests>) typeConverter.convertValue(sourceObject,
 					TypeDescriptor.forObject(sourceObject),
@@ -101,7 +102,7 @@ public class BeanFactoryTypeConverterTests {
 		@SuppressWarnings("unchecked")
 		Collection<Integer> converted = (Collection<Integer>) typeConverter.convertValue(1234,
 				TypeDescriptor.valueOf(Integer.class),
-				TypeDescriptor.forObject(new ArrayList<Integer>(Arrays.asList(1))));
+				TypeDescriptor.forObject(new ArrayList<>(Arrays.asList(1))));
 		assertEquals(Arrays.asList(1234), converted);
 	}
 
@@ -109,7 +110,7 @@ public class BeanFactoryTypeConverterTests {
 	public void testMessageHeadersNotConverted() {
 		BeanFactoryTypeConverter typeConverter = new BeanFactoryTypeConverter();
 		typeConverter.setBeanFactory(new DefaultListableBeanFactory());
-		MessageHeaders headers = new GenericMessage<String>("foo").getHeaders();
+		MessageHeaders headers = new GenericMessage<>("foo").getHeaders();
 		assertSame(headers, typeConverter.convertValue(headers, TypeDescriptor.valueOf(MessageHeaders.class),
 				TypeDescriptor.valueOf(MessageHeaders.class)));
 	}
@@ -118,7 +119,7 @@ public class BeanFactoryTypeConverterTests {
 	public void testMessageHistoryNotConverted() {
 		BeanFactoryTypeConverter typeConverter = new BeanFactoryTypeConverter();
 		typeConverter.setBeanFactory(new DefaultListableBeanFactory());
-		Message<String> message = new GenericMessage<String>("foo");
+		Message<String> message = new GenericMessage<>("foo");
 		message = MessageHistory.write(message, new NamedComponent() {
 			@Override
 			public String getComponentName() {
@@ -172,7 +173,7 @@ public class BeanFactoryTypeConverterTests {
 	public void testMapOfMapOfCollectionIsConverted() {
 		DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
 		DefaultConversionService conversionService = new DefaultConversionService();
-		conversionService.addConverter(new Converter<Foo, Bar>() {
+		conversionService.addConverter(new Converter<Foo, Bar>() { // Must be explicit type with generics
 			@Override
 			public Bar convert(Foo source) {
 				return new Bar();
@@ -189,11 +190,11 @@ public class BeanFactoryTypeConverterTests {
 				TypeDescriptor.map(Map.class, TypeDescriptor.valueOf(String.class),
 						TypeDescriptor.collection(Set.class, TypeDescriptor.valueOf(Bar.class))));
 
-		Set<Foo> fooSet = new HashSet<Foo>();
+		Set<Foo> fooSet = new HashSet<>();
 		fooSet.add(new Foo());
 		Map<String, Set<Foo>> fooMap = new HashMap<String, Set<Foo>>();
 		fooMap.put("foo", fooSet);
-		foos = new HashMap<String, Map<String, Set<Foo>>>();
+		foos = new HashMap<>();
 		foos.put("foo", fooMap);
 
 		bars = (Map<String, Map<String, Set<Bar>>>) typeConverter.convertValue(foos, sourceType, targetType);
@@ -206,7 +207,7 @@ public class BeanFactoryTypeConverterTests {
 		ServiceActivatingHandler handler = new ServiceActivatingHandler(processor);
 		QueueChannel replyChannel = new QueueChannel();
 		handler.setOutputChannel(replyChannel);
-		handler.handleMessage(new GenericMessage<Map<String, Map<String, Set<Foo>>>>(foos));
+		handler.handleMessage(new GenericMessage<>(foos));
 		Message<?> message = replyChannel.receive(0);
 		assertNotNull(message);
 		assertEquals("bar", message.getPayload());
@@ -216,7 +217,7 @@ public class BeanFactoryTypeConverterTests {
 	public void testCollectionIsConverted() {
 		DefaultListableBeanFactory beanFactory = new DefaultListableBeanFactory();
 		DefaultConversionService conversionService = new DefaultConversionService();
-		conversionService.addConverter(new Converter<Foo, Bar>() {
+		conversionService.addConverter(new Converter<Foo, Bar>() { // Must be explicit type with generics
 			@Override
 			public Bar convert(Foo source) {
 				return new Bar();
@@ -271,7 +272,7 @@ public class BeanFactoryTypeConverterTests {
 	public void testEditorWithTargetFoo() {
 		DefaultConversionService conversionService = new DefaultConversionService();
 		final Foo foo = new Foo();
-		conversionService.addConverter(new Converter<String, Foo>() {
+		conversionService.addConverter(new Converter<String, Foo>() { // Must be explicit type with generics
 			@Override
 			public Foo convert(String source) {
 				return foo;
@@ -295,6 +296,7 @@ public class BeanFactoryTypeConverterTests {
 	}
 
 	@Test
+	@Ignore("Too sensitive for the time")
 	public void initialConcurrency() throws Exception {
 		ConversionService conversionService = mock(ConversionService.class); // can convert nothing so we drop down to P.E.s
 		final BeanFactoryTypeConverter beanFactoryTypeConverter = new BeanFactoryTypeConverter(conversionService);
@@ -306,9 +308,9 @@ public class BeanFactoryTypeConverterTests {
 		final AtomicInteger count = new AtomicInteger();
 		doAnswer(invocation -> {
 			count.incrementAndGet();
-			Thread.sleep(500);
+			Thread.sleep(100);
 			concurrentlyInGetDefaultEditor.set(inGetDefaultEditor.getAndSet(true));
-			Thread.sleep(500);
+			Thread.sleep(100);
 			inGetDefaultEditor.set(false);
 			return invocation.callRealMethod();
 		}).when(typeConverter).getDefaultEditor(UUID.class);

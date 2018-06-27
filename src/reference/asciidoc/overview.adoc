@@ -211,6 +211,167 @@ image::images/target-endpoint.jpg[align="center", scaledwidth=100%]
 
 NOTE: As discussed in <<overview-components-channel, Message Channel>> above, channels can be _Pollable_ or _Subscribable_; in this diagram, this is depicted by the "clock" symbol and the solid arrow (poll) and the dotted arrow (subscribe).
 
+[[endpoint-bean-names]]
+==== Endpoint Bean Names
+
+Consuming endpoints (anything with an `inputChannel`) consist of two beans, the consumer and message handler.
+The consumer has a reference to the message handler and invokes it as messages arrive.
+
+When configuring with XML:
+
+[source, xml]
+----
+<int:service-activator id = "someService" ... />
+----
+
+the bean names will be as follows:
+
+- Consumer: `someService` (the `id`)
+- Handler: `someService.handler`
+
+When using EIP annotations, the names depend on several factors.
+
+**When Annotating POJO Methods**
+
+[source, java]
+----
+@Component
+public class SomeComponent {
+
+    @ServiceActivator(inputChannel = ...)
+    public String someMethod(...) {
+        ...
+    }
+
+}
+----
+
+the bean names will be as follows:
+
+- Consumer: `someComponent.someMethod.serviceActivator`
+- Handler: `someComponent.someMethod.serviceActivator.handler`
+
+Starting with _version 5.0.4_, these names can be modified using the `@EndpointId` annotation:
+
+[source, java]
+----
+@Component
+public class SomeComponent {
+
+    @EndpointId("someService")
+    @ServiceActivator(inputChannel = ...)
+    public String someMethod(...) {
+        ...
+    }
+
+}
+----
+
+the bean names will be as follows:
+
+- Consumer: `someService`
+- Handler: `someService.handler`
+
+i.e. `@EndpointId` creates names as created by the `id` attribute with XML configuration.
+
+
+**When Annotating @Beans**
+
+[source, java]
+----
+@Configuratiom
+public class SomeConfiguration {
+
+    @Bean
+    @ServiceActivator(inputChannel = ...)
+    public MessageHandler someHandler() {
+        ...
+    }
+
+}
+----
+
+the bean names will be as follows:
+
+- Consumer: `someConfiguration.someHandler.serviceActivator`
+- Handler: `someHandler` (the `@Bean` name)
+
+Starting with _version 5.0.4_, these names can be modified using the `@EndpointId` annotation:
+
+[source, java]
+----
+@Configuratiom
+public class SomeConfiguration {
+
+    @Bean("someService.handler")
+    @EndpointId("someService")
+    @ServiceActivator(inputChannel = ...)
+    public MessageHandler someHandler() {
+        ...
+    }
+
+}
+----
+
+- Consumer: `someService`
+- Handler: `someService.handler`
+
+i.e. `@EndpointId` creates names as created by the `id` attribute with XML configuration, as long as you use the convention of appending `.handler` to the `@Bean` name.
+
+There is one special case where a third bean is created; for architectural reasons, if a `MessageHandler` `@Bean` does not define an `AbstractReplyProducingMessageHandler`, the framework wraps the provided bean in a `ReplyProducingMessageHandlerWrapper`.
+This wrapper supports request handler advice handling as well as emitting the normal 'produced no reply' debug log messages.
+Its bean name is the handler bean name plus `.wrapper` (when there is an `@EndpointId`, otherwise it's the normal generated handler name).
+
+**Message Sources**
+
+Similarly <<pollable-message-source, Pollable Message Sources>> create two beans, a `SourcePollingChannelAdapter` (SPCA) and a `MessageSource`.
+
+When configuring with XML:
+
+[source, xml]
+----
+<int:inbound-channel-adapter id = "someAdapter" ... />
+----
+
+the bean names will be as follows:
+
+- SPCA: `someAdapter` (the `id`)
+- Handler: `someAdapter.source`
+
+Using `@EndpointId` with Java configuration:
+
+[source, java]
+----
+@EndpointId("someAdapter")
+@InboundChannelAdapter(channel = "channel3", poller = @Poller(fixedDelay = "5000"))
+public String pojoSource() {
+    ...
+}
+----
+
+the bean names will be as follows:
+
+- SPCA: `someAdapter`
+- Handler: `someAdapter.source`
+
+[source, java]
+----
+@Bean("someAdapter.source")
+@EndpointId("someAdapter")
+@InboundChannelAdapter(channel = "channel3", poller = @Poller(fixedDelay = "5000"))
+public MessageSource<?> source() {
+    return () -> {
+        ...
+    };
+}
+----
+
+the bean names will be as follows:
+
+- SPCA: `someAdapter`
+- Handler: `someAdapter.source` (as long as you use the convention of appending `.source` to the `@Bean` name)
+
+
 [[configuration-enable-integration]]
 === Configuration and @EnableIntegration
 
@@ -252,6 +413,9 @@ This annotation is an analogue of the `<int:channel-interceptor>` xml element (s
 `@GlobalChannelInterceptor` annotations can be placed at the class level (with a `@Component` stereotype annotation), or on `@Bean` methods within `@Configuration` classes.
 In either case, the bean *must* be a `ChannelInterceptor`.
 
+Starting with _version 5.1_, global channel interceptors are now applied to channels registered dynamically - such as via the `IntegrationFlowContext` when using the Java DSL, or beans that are initialized using `beanFactory.initializeBean()`.
+Previously, interceptors were not applied when beans were created after the application context was refreshed.
+
 The `@IntegrationConverter` annotation has been introduced to mark `Converter`, `GenericConverter` or `ConverterFactory` beans as candidate converters for `integrationConversionService`.
 This annotation is an analogue of the `<int:converter>` xml element (see <<payload-type-conversion>>).
 `@IntegrationConverter` annotations can be placed at the class level (with a `@Component` stereotype annotation), or on `@Bean` methods within `@Configuration` classes.
@@ -272,6 +436,86 @@ If you do expose the framework to your classes, there are some considerations th
 If you need to send a messages during startup, implement `ApplicationListener` and wait for the `ContextRefreshedEvent`.
 Alternatively, implement `SmartLifecycle`, put your bean in a late phase, and send the messages from the `start()` method.
 
+
+[[shaded]]
+=== Considerations When using Packaged (e.g. Shaded) Jars
+
+Spring Integration bootstraps certain features using Spring Framework's `SpringFactories` mechanism to load several `IntegrationConfigurationInitializer` classes.
+This includes the `-core` jar as well as certain others such as `-http`, `-jmx`, etc.
+The information for this process is stored in a file `META-INF/spring.factories` in each jar.
+
+Some developers prefer to repackage their application and all dependencies into a single jar using well-known tools, such as the https://maven.apache.org/plugins/maven-shade-plugin/[Apache Maven Shade Plugin].
+
+By default, the shade plugin will not merge the `spring.factories` files when producing the shaded jar.
+
+In addition to `spring.factories`, there are other `META-INF` files (`spring.handlers`, `spring.schemas`) used for XML configuration.
+These also need to be merged.
+
+IMPORTANT: https://docs.spring.io/spring-boot/docs/current/reference/html/executable-jar.html[Spring Boot's executable jar mechanism] takes a different approach in that it nests the jars, thus retaining each `spring.factories` file on the class path.
+So, with a Spring Boot application, nothing more is needed, if you use its default executable jar format.
+
+Even if you are not using Spring Boot, you can still use tooling provided by Boot to enhance the shade plugin by adding transformers for the above mentioned files.
+
+The following is an example configuration for the plugin at the time of writing.
+You may wish to consult the current https://github.com/spring-projects/spring-boot/blob/master/spring-boot-project/spring-boot-starters/spring-boot-starter-parent/pom.xml[spring-boot-starter-parent pom] to see the current settings that boot uses.
+
+.pom.xml
+[source, xml]
+----
+...
+    <plugins>
+        <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-shade-plugin</artifactId>
+            <configuration>
+                <keepDependenciesWithProvidedScope>true</keepDependenciesWithProvidedScope>
+                <createDependencyReducedPom>true</createDependencyReducedPom>
+            </configuration>
+            <dependencies>
+                <dependency> <1>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring.boot.version}</version>
+                </dependency>
+            </dependencies>
+            <executions>
+                <execution>
+                    <phase>package</phase>
+                    <goals>
+                        <goal>shade</goal>
+                    </goals>
+                    <configuration>
+                        <transformers> <2>
+                            <transformer
+                                implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                <resource>META-INF/spring.handlers</resource>
+                            </transformer>
+                            <transformer
+                                implementation="org.springframework.boot.maven.PropertiesMergingResourceTransformer">
+                                <resource>META-INF/spring.factories</resource>
+                            </transformer>
+                            <transformer
+                                implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                <resource>META-INF/spring.schemas</resource>
+                            </transformer>
+                            <transformer
+                                implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+                        </transformers>
+                    </configuration>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+...
+----
+
+Specifically,
+
+<1> add the `spring-boot-maven-plugin` as a dependency
+
+<2> configure the transformers
+
+Add a property for `${spring.boot.version}` or use a version explicitly there.
 
 [[programming-tips]]
 === Programming Tips and Tricks

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package org.springframework.integration.gateway;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -371,7 +372,12 @@ public abstract class MessagingGatewaySupport extends AbstractEndpoint
 		return this.requestChannel;
 	}
 
-	protected MessageChannel getReplyChannel() {
+	/**
+	 * Return this gateway's reply channel if any.
+	 * @return the reply channel instance
+	 * @since 5.1
+	 */
+	public MessageChannel getReplyChannel() {
 		if (this.replyChannelName != null) {
 			synchronized (this) {
 				if (this.replyChannelName != null) {
@@ -792,11 +798,14 @@ public abstract class MessagingGatewaySupport extends AbstractEndpoint
 		}
 
 		@Override
-		public Message<?> toMessage(Object object) throws Exception {
+		public Message<?> toMessage(Object object, @Nullable Map<String, Object> headers) throws Exception {
 			if (object instanceof Message<?>) {
 				return (Message<?>) object;
 			}
-			return (object != null) ? this.messageBuilderFactory.withPayload(object).build() : null;
+
+			return object != null
+					? this.messageBuilderFactory.withPayload(object).copyHeadersIfAbsent(headers).build()
+					: null;
 		}
 
 	}

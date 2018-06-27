@@ -22,13 +22,25 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
+import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageHeaders;
 import org.springframework.util.Assert;
 import org.springframework.util.PatternMatchUtils;
 import org.springframework.util.StringUtils;
 
 
 /**
+ * Specialized message builder that can be used within a component to avoid the overhead
+ * of having to build multiple messages for mutations within that component.
+ *
+ * <p>
+ * <b>IMPORTANT: Mutable messages may share state (such as message headers); such messages
+ * should never be exposed to other components or undesirable side-effects may result.</b>
+ * <p>
+ * <b>It is generally recommended that messages transferred between components should
+ * always be immutable unless great care is taken with their use.</b>
+ *
  * @author Gary Russell
  * @author Artem Bilan
  * @since 4.0
@@ -65,6 +77,39 @@ public final class MutableMessageBuilder<T> extends AbstractIntegrationMessageBu
 	}
 
 	/**
+	 * Create a builder for a new {@link Message} instance with the provided payload.
+	 * @param payload the payload for the new message
+	 * @param <T> The type of the payload.
+	 * @return A MutableMessageBuilder.
+	 */
+	public static <T> MutableMessageBuilder<T> withPayload(T payload) {
+		return withPayload(payload, true);
+	}
+
+	/**
+	 * Create a builder for a new {@link Message} instance with the provided payload.
+	 * The {@code generateHeaders} flag allows to disable {@link MessageHeaders#ID}
+	 * and {@link MessageHeaders#TIMESTAMP} headers generation.
+	 * @param payload the payload for the new message
+	 * @param generateHeaders whether generate {@link MessageHeaders#ID}
+	 * and {@link MessageHeaders#TIMESTAMP} headers
+	 * @param <T> The type of the payload.
+	 * @return A MutableMessageBuilder.
+	 * @since 5.0
+	 */
+	public static <T> MutableMessageBuilder<T> withPayload(T payload, boolean generateHeaders) {
+		MutableMessage<T> message;
+		if (generateHeaders) {
+			message = new MutableMessage<>(payload);
+		}
+		else {
+			message = new MutableMessage<>(payload, new MutableMessageHeaders(null, MessageHeaders.ID_VALUE_NONE, -1L));
+		}
+
+		return fromMessage(message);
+	}
+
+	/**
 	 * Create a builder for a new {@link Message} instance pre-populated with all of the headers copied from the
 	 * provided message. The payload of the provided Message will also be used as the payload for the new message.
 	 * @param message the Message from which the payload and all headers will be copied
@@ -76,18 +121,8 @@ public final class MutableMessageBuilder<T> extends AbstractIntegrationMessageBu
 		return new MutableMessageBuilder<T>(message);
 	}
 
-	/**
-	 * Create a builder for a new {@link Message} instance with the provided payload.
-	 * @param payload the payload for the new message
-	 * @param <T> The type of the payload.
-	 * @return A MessageBuilder.
-	 */
-	public static <T> MutableMessageBuilder<T> withPayload(T payload) {
-		return new MutableMessageBuilder<T>(new MutableMessage<T>(payload));
-	}
-
 	@Override
-	public AbstractIntegrationMessageBuilder<T> setHeader(String headerName, Object headerValue) {
+	public AbstractIntegrationMessageBuilder<T> setHeader(String headerName, @Nullable Object headerValue) {
 		Assert.notNull(headerName, "'headerName' must not be null");
 		if (headerValue == null) {
 			this.removeHeader(headerName);
@@ -146,7 +181,7 @@ public final class MutableMessageBuilder<T> extends AbstractIntegrationMessageBu
 	}
 
 	@Override
-	public AbstractIntegrationMessageBuilder<T> copyHeaders(Map<String, ?> headersToCopy) {
+	public AbstractIntegrationMessageBuilder<T> copyHeaders(@Nullable Map<String, ?> headersToCopy) {
 		if (headersToCopy != null) {
 			this.headers.putAll(headersToCopy);
 		}
@@ -154,7 +189,7 @@ public final class MutableMessageBuilder<T> extends AbstractIntegrationMessageBu
 	}
 
 	@Override
-	public AbstractIntegrationMessageBuilder<T> copyHeadersIfAbsent(Map<String, ?> headersToCopy) {
+	public AbstractIntegrationMessageBuilder<T> copyHeadersIfAbsent(@Nullable Map<String, ?> headersToCopy) {
 		if (headersToCopy != null) {
 			for (Entry<String, ?> entry : headersToCopy.entrySet()) {
 				setHeaderIfAbsent(entry.getKey(), entry.getValue());

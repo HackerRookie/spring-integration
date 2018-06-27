@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 the original author or authors.
+ * Copyright 2014-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -70,7 +70,6 @@ import org.springframework.messaging.MessageHandler;
 import org.springframework.messaging.MessageHandlingException;
 import org.springframework.messaging.PollableChannel;
 import org.springframework.messaging.support.ChannelInterceptor;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
 import org.springframework.messaging.support.GenericMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.test.annotation.DirtiesContext;
@@ -250,7 +249,7 @@ public class IdempotentReceiverIntegrationTests {
 
 		@Bean
 		public HazelcastInstance hazelcastInstance() {
-			return Hazelcast.newHazelcastInstance(new Config().setProperty("hazelcast.logging.type", "log4j"));
+			return Hazelcast.newHazelcastInstance(new Config().setProperty("hazelcast.logging.type", "slf4j"));
 		}
 
 
@@ -298,11 +297,10 @@ public class IdempotentReceiverIntegrationTests {
 		@Bean
 		@GlobalChannelInterceptor(patterns = "output")
 		public ChannelInterceptor txSuppliedChannelInterceptor(final AtomicBoolean txSupplied) {
-			return new ChannelInterceptorAdapter() {
+			return new ChannelInterceptor() {
 
 				@Override
 				public void postSend(Message<?> message, MessageChannel channel, boolean sent) {
-					super.postSend(message, channel, sent);
 					txSupplied.set(TransactionSynchronizationManager.isActualTransactionActive());
 				}
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,10 @@ import static org.junit.Assert.assertThat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.Rule;
 import org.junit.Test;
 
 import org.springframework.integration.leader.Context;
@@ -34,25 +36,36 @@ import org.springframework.integration.redis.rules.RedisAvailable;
 import org.springframework.integration.redis.rules.RedisAvailableTests;
 import org.springframework.integration.redis.util.RedisLockRegistry;
 import org.springframework.integration.support.leader.LockRegistryLeaderInitiator;
+import org.springframework.integration.test.rule.Log4j2LevelAdjuster;
+import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 
 /**
  * @author Artem Bilan
  * @author Gary Russell
+ * @author Glenn Renfro
  *
  * @since 4.3.9
  */
 public class RedisLockRegistryLeaderInitiatorTests extends RedisAvailableTests {
 
+	@Rule
+	public Log4j2LevelAdjuster adjuster =
+			Log4j2LevelAdjuster.trace()
+					.categories(true, "org.springframework.integration.redis.leader");
+
 	@Test
 	@RedisAvailable
 	public void testDistributedLeaderElection() throws Exception {
+		RedisLockRegistry registry = new RedisLockRegistry(getConnectionFactoryForTest(), "LeaderInitiator");
+		registry.expireUnusedOlderThan(-1);
 		CountDownLatch granted = new CountDownLatch(1);
 		CountingPublisher countingPublisher = new CountingPublisher(granted);
 		List<LockRegistryLeaderInitiator> initiators = new ArrayList<>();
 		for (int i = 0; i < 2; i++) {
-			RedisLockRegistry registry = new RedisLockRegistry(getConnectionFactoryForTest(), "LeaderInitiator");
 			LockRegistryLeaderInitiator initiator =
-					new LockRegistryLeaderInitiator(registry, new DefaultCandidate("foo", "bar"));
+					new LockRegistryLeaderInitiator(registry, new DefaultCandidate("foo:" + i, "bar"));
+			initiator.setExecutorService(
+					Executors.newSingleThreadExecutor(new CustomizableThreadFactory("lock-leadership-" + i + "-")));
 			initiator.setLeaderEventPublisher(countingPublisher);
 			initiators.add(initiator);
 		}
@@ -83,48 +96,31 @@ public class RedisLockRegistryLeaderInitiatorTests extends RedisAvailableTests {
 		final CountDownLatch granted2 = new CountDownLatch(1);
 		CountDownLatch revoked1 = new CountDownLatch(1);
 		CountDownLatch revoked2 = new CountDownLatch(1);
-		initiator1.setLeaderEventPublisher(new CountingPublisher(granted1, revoked1) {
+		CountDownLatch acquireLockFailed1 = new CountDownLatch(1);
+		CountDownLatch acquireLockFailed2 = new CountDownLatch(1);
 
-			@Override
-			public void publishOnRevoked(Object source, Context context, String role) {
-				try {
-					// It's difficult to see round-robin election, so block one initiator until the second is elected.
-					assertThat(granted2.await(10, TimeUnit.SECONDS), is(true));
-				}
-				catch (InterruptedException e) {
-					// No op
-				}
-				super.publishOnRevoked(source, context, role);
-			}
+		initiator1.setLeaderEventPublisher(new CountingPublisher(granted1, revoked1, acquireLockFailed1));
 
-		});
+		initiator2.setLeaderEventPublisher(new CountingPublisher(granted2, revoked2, acquireLockFailed2));
 
-		initiator2.setLeaderEventPublisher(new CountingPublisher(granted2, revoked2) {
-
-			@Override
-			public void publishOnRevoked(Object source, Context context, String role) {
-				try {
-					// It's difficult to see round-robin election, so block one initiator until the second is elected.
-					assertThat(granted1.await(10, TimeUnit.SECONDS), is(true));
-				}
-				catch (InterruptedException e) {
-					// No op
-				}
-				super.publishOnRevoked(source, context, role);
-			}
-
-		});
+		// It's hard to see round-robin election, so let's make the yielding initiator to sleep long before restarting
+		initiator1.setBusyWaitMillis(1000);
 
 		initiator1.getContext().yield();
 
-		assertThat(revoked1.await(10, TimeUnit.SECONDS), is(true));
+		assertThat(revoked1.await(20, TimeUnit.SECONDS), is(true));
+		assertThat(granted2.await(20, TimeUnit.SECONDS), is(true));
 
 		assertThat(initiator2.getContext().isLeader(), is(true));
 		assertThat(initiator1.getContext().isLeader(), is(false));
 
+		initiator1.setBusyWaitMillis(LockRegistryLeaderInitiator.DEFAULT_BUSY_WAIT_TIME);
+		initiator2.setBusyWaitMillis(1000);
+
 		initiator2.getContext().yield();
 
-		assertThat(revoked2.await(10, TimeUnit.SECONDS), is(true));
+		assertThat(revoked2.await(20, TimeUnit.SECONDS), is(true));
+		assertThat(granted1.await(20, TimeUnit.SECONDS), is(true));
 
 		assertThat(initiator1.getContext().isLeader(), is(true));
 		assertThat(initiator2.getContext().isLeader(), is(false));
@@ -132,7 +128,8 @@ public class RedisLockRegistryLeaderInitiatorTests extends RedisAvailableTests {
 		initiator2.stop();
 
 		CountDownLatch revoked11 = new CountDownLatch(1);
-		initiator1.setLeaderEventPublisher(new CountingPublisher(new CountDownLatch(1), revoked11));
+		initiator1.setLeaderEventPublisher(new CountingPublisher(new CountDownLatch(1), revoked11,
+				new CountDownLatch(1)));
 
 		initiator1.getContext().yield();
 
@@ -150,18 +147,26 @@ public class RedisLockRegistryLeaderInitiatorTests extends RedisAvailableTests {
 
 		private volatile LockRegistryLeaderInitiator initiator;
 
-		CountingPublisher(CountDownLatch granted, CountDownLatch revoked) {
+		private final CountDownLatch acquireLockFailed;
+
+		CountingPublisher(CountDownLatch granted, CountDownLatch revoked, CountDownLatch acquireLockFailed) {
 			this.granted = granted;
 			this.revoked = revoked;
+			this.acquireLockFailed = acquireLockFailed;
 		}
 
 		CountingPublisher(CountDownLatch granted) {
-			this(granted, new CountDownLatch(1));
+			this(granted, new CountDownLatch(1), new CountDownLatch(1));
 		}
 
 		@Override
 		public void publishOnRevoked(Object source, Context context, String role) {
 			this.revoked.countDown();
+		}
+
+		@Override
+		public void publishOnFailedToAcquire(Object source, Context context, String role) {
+			this.acquireLockFailed.countDown();
 		}
 
 		@Override

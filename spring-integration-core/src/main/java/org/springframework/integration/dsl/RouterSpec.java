@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,17 +18,14 @@ package org.springframework.integration.dsl;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.springframework.context.ApplicationListener;
-import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.support.DefaultConversionService;
-import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.context.IntegrationObjectSupport;
 import org.springframework.integration.router.AbstractMappingMessageRouter;
 import org.springframework.integration.support.context.NamedComponent;
 import org.springframework.integration.support.management.MappingMessageRouterManagement;
+import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessagingException;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -146,23 +143,30 @@ public final class RouterSpec<K, R extends AbstractMappingMessageRouter>
 	 * Add a subflow as an alternative to a {@link #channelMapping(Object, String)}.
 	 * {@link #prefix(String)} and {@link #suffix(String)} cannot be used when subflow
 	 * mappings are used.
+	 * <p> If subflow should refer to the external {@link IntegrationFlow} bean and
+	 * there is a requirement to expect reply from there, such a reference should be
+	 * wrapped with a {@code .gateway()}:
+	 * <pre class="code">
+	 * {@code
+	 *     .subFlowMapping(false, sf -> sf.gateway(evenFlow())))
+	 * }
+	 * </pre>
 	 * @param key the key.
 	 * @param subFlow the subFlow.
 	 * @return the router spec.
 	 */
 	public RouterSpec<K, R> subFlowMapping(K key, IntegrationFlow subFlow) {
 		Assert.notNull(key, "'key' must not be null");
-		Assert.notNull(subFlow, "'subFlow' must not be null");
 		Assert.state(!(StringUtils.hasText(this.prefix) || StringUtils.hasText(this.suffix)),
 				"The 'prefix'('suffix') and 'subFlowMapping' are mutually exclusive");
 
-		DirectChannel channel = new DirectChannel();
-		IntegrationFlowBuilder flowBuilder = IntegrationFlows.from(channel);
-		subFlow.configure(flowBuilder);
+		MessageChannel channel = obtainInputChannelFromFlow(subFlow, false);
 
-		this.componentsToRegister.put(flowBuilder, null);
+		Assert.isInstanceOf(NamedComponent.class, channel,
+				() -> "The routing channel '" + channel +
+						"' from the flow '" + subFlow + "' must be instance of 'NamedComponent'.");
 
-		this.mappingProvider.addMapping(key, channel);
+		this.mappingProvider.addMapping(key, (NamedComponent) channel);
 		return _this();
 	}
 
@@ -179,14 +183,11 @@ public final class RouterSpec<K, R extends AbstractMappingMessageRouter>
 		return super.getComponentsToRegister();
 	}
 
-	private static class RouterMappingProvider extends IntegrationObjectSupport
-			implements ApplicationListener<ContextRefreshedEvent> {
-
-		private final AtomicBoolean initialized = new AtomicBoolean();
+	private static class RouterMappingProvider extends IntegrationObjectSupport {
 
 		private final MappingMessageRouterManagement router;
 
-		private final Map<Object, NamedComponent> mapping = new HashMap<Object, NamedComponent>();
+		private final Map<Object, NamedComponent> mapping = new HashMap<>();
 
 		RouterMappingProvider(MappingMessageRouterManagement router) {
 			this.router = router;
@@ -197,31 +198,30 @@ public final class RouterSpec<K, R extends AbstractMappingMessageRouter>
 		}
 
 		@Override
-		public void onApplicationEvent(ContextRefreshedEvent event) {
-			if (event.getApplicationContext() == getApplicationContext() && !this.initialized.getAndSet(true)) {
-				ConversionService conversionService = getConversionService();
-				if (conversionService == null) {
-					conversionService = DefaultConversionService.getSharedInstance();
+		protected void onInit() throws Exception {
+			super.onInit();
+			ConversionService conversionService = getConversionService();
+			if (conversionService == null) {
+				conversionService = DefaultConversionService.getSharedInstance();
+			}
+			for (Map.Entry<Object, NamedComponent> entry : this.mapping.entrySet()) {
+				Object key = entry.getKey();
+				String channelKey;
+				if (key instanceof String) {
+					channelKey = (String) key;
 				}
-				for (Map.Entry<Object, NamedComponent> entry : this.mapping.entrySet()) {
-					Object key = entry.getKey();
-					String channelKey;
-					if (key instanceof String) {
-						channelKey = (String) key;
-					}
-					else if (key instanceof Class) {
-						channelKey = ((Class<?>) key).getName();
-					}
-					else if (conversionService.canConvert(key.getClass(), String.class)) {
-						channelKey = conversionService.convert(key, String.class);
-					}
-					else {
-						throw new MessagingException("Unsupported channel mapping type for router ["
-								+ key.getClass() + "]");
-					}
+				else if (key instanceof Class) {
+					channelKey = ((Class<?>) key).getName();
+				}
+				else if (conversionService.canConvert(key.getClass(), String.class)) {
+					channelKey = conversionService.convert(key, String.class);
+				}
+				else {
+					throw new MessagingException("Unsupported channel mapping type for router ["
+							+ key.getClass() + "]");
+				}
 
-					this.router.setChannelMapping(channelKey, entry.getValue().getComponentName());
-				}
+				this.router.setChannelMapping(channelKey, entry.getValue().getComponentName());
 			}
 		}
 

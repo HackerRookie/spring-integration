@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package org.springframework.integration.router;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
@@ -41,6 +42,7 @@ import org.springframework.messaging.MessageChannel;
 
 /**
  * @author Gary Russell
+ *
  * @since 3.0
  *
  */
@@ -60,11 +62,11 @@ public class RouterConcurrencyTest {
 			protected void setConversionService(ConversionService conversionService) {
 				try {
 					if (count.incrementAndGet() > 1) {
-						Thread.sleep(2000);
+						Thread.sleep(20);
 					}
 					super.setConversionService(conversionService);
 					semaphore.release();
-					Thread.sleep(1000);
+					Thread.sleep(10);
 				}
 				catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
@@ -84,8 +86,7 @@ public class RouterConcurrencyTest {
 		router.setBeanFactory(beanFactory);
 
 		ExecutorService exec = Executors.newFixedThreadPool(2);
-		final List<ConversionService> returns = Collections.synchronizedList(
-				new ArrayList<ConversionService>());
+		final List<ConversionService> returns = Collections.synchronizedList(new ArrayList<>());
 		Runnable runnable = () -> {
 			ConversionService requiredConversionService = router.getRequiredConversionService();
 			returns.add(requiredConversionService);
@@ -93,7 +94,7 @@ public class RouterConcurrencyTest {
 		exec.execute(runnable);
 		exec.execute(runnable);
 		exec.shutdown();
-		exec.awaitTermination(10, TimeUnit.SECONDS);
+		assertTrue(exec.awaitTermination(30, TimeUnit.SECONDS));
 		assertEquals(2, returns.size());
 		assertNotNull(returns.get(0));
 		assertNotNull(returns.get(1));

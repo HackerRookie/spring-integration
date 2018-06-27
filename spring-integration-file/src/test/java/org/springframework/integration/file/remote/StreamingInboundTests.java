@@ -41,6 +41,7 @@ import org.junit.rules.ExpectedException;
 
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
+import org.springframework.integration.StaticMessageHeaderAccessor;
 import org.springframework.integration.channel.QueueChannel;
 import org.springframework.integration.file.FileHeaders;
 import org.springframework.integration.file.filters.AcceptOnceFileListFilter;
@@ -85,7 +86,7 @@ public class StreamingInboundTests {
 		assertThat(fileInfo, containsString("link\":false"));
 
 		// close after list, transform
-		verify(new IntegrationMessageHeaderAccessor(received).getCloseableResource(), times(2)).close();
+		verify(StaticMessageHeaderAccessor.getCloseableResource(received), times(2)).close();
 
 		received = (Message<byte[]>) this.transformer.transform(streamer.receive());
 		assertEquals("baz\nqux", new String(received.getPayload()));
@@ -101,7 +102,7 @@ public class StreamingInboundTests {
 		assertThat(fileInfo, containsString("link\":false"));
 
 		// close after transform
-		verify(new IntegrationMessageHeaderAccessor(received).getCloseableResource(), times(3)).close();
+		verify(StaticMessageHeaderAccessor.getCloseableResource(received), times(3)).close();
 
 		verify(sessionFactory.getSession()).list("/foo");
 	}
@@ -122,7 +123,7 @@ public class StreamingInboundTests {
 		assertEquals("foo", received.getHeaders().get(FileHeaders.REMOTE_FILE));
 
 		// close after list, transform
-		verify(new IntegrationMessageHeaderAccessor(received).getCloseableResource(), times(2)).close();
+		verify(StaticMessageHeaderAccessor.getCloseableResource(received), times(2)).close();
 
 		received = (Message<byte[]>) this.transformer.transform(streamer.receive());
 		assertEquals("baz\nqux", new String(received.getPayload()));
@@ -171,7 +172,7 @@ public class StreamingInboundTests {
 		assertNull(out.receive(0));
 
 		// close by list, splitter
-		verify(new IntegrationMessageHeaderAccessor(receivedStream).getCloseableResource(), times(2)).close();
+		verify(new IntegrationMessageHeaderAccessor(receivedStream).getCloseableResource(), times(3)).close();
 
 		receivedStream = streamer.receive();
 		splitter.handleMessage(receivedStream);
@@ -186,7 +187,7 @@ public class StreamingInboundTests {
 		assertNull(out.receive(0));
 
 		// close by splitter
-		verify(new IntegrationMessageHeaderAccessor(receivedStream).getCloseableResource(), times(3)).close();
+		verify(new IntegrationMessageHeaderAccessor(receivedStream).getCloseableResource(), times(5)).close();
 	}
 
 	public static class Streamer extends AbstractRemoteFileStreamingMessageSource<String> {

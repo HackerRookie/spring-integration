@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,13 +50,18 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.ServerSocketFactory;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.junit.ClassRule;
+import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mockito;
 
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.core.serializer.DefaultDeserializer;
 import org.springframework.core.serializer.DefaultSerializer;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
@@ -70,7 +74,7 @@ import org.springframework.integration.ip.tcp.connection.TcpConnectionSupport;
 import org.springframework.integration.ip.tcp.connection.TcpNetClientConnectionFactory;
 import org.springframework.integration.ip.tcp.connection.TcpNioClientConnectionFactory;
 import org.springframework.integration.support.MessageBuilder;
-import org.springframework.integration.test.support.LogAdjustingTestSupport;
+import org.springframework.integration.test.rule.Log4j2LevelAdjuster;
 import org.springframework.integration.test.support.LongRunningIntegrationTest;
 import org.springframework.integration.test.util.TestUtils;
 import org.springframework.messaging.Message;
@@ -80,24 +84,33 @@ import org.springframework.messaging.support.GenericMessage;
 /**
  * @author Gary Russell
  * @author Artem Bilan
+ *
  * @since 2.0
  */
-public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
+public class TcpOutboundGatewayTests {
+
+	private static final Log logger = LogFactory.getLog(TcpOutboundGatewayTests.class);
+
+	private final AsyncTaskExecutor executor = new SimpleAsyncTaskExecutor();
 
 	@ClassRule
 	public static LongRunningIntegrationTest longTests = new LongRunningIntegrationTest();
+
+	@Rule
+	public Log4j2LevelAdjuster adjuster = Log4j2LevelAdjuster.trace();
+
 
 	@Test
 	public void testGoodNetSingle() throws Exception {
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0, 100);
 				serverSocket.set(server);
 				latch.countDown();
-				List<Socket> sockets = new ArrayList<Socket>();
+				List<Socket> sockets = new ArrayList<>();
 				int i = 0;
 				while (true) {
 					Socket socket = server.accept();
@@ -148,6 +161,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 			assertTrue(replies.remove("Reply" + i));
 		}
 		done.set(true);
+		ccf.stop();
 		serverSocket.get().close();
 	}
 
@@ -155,8 +169,8 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 	public void testGoodNetMultiplex() throws Exception {
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0, 10);
 				serverSocket.set(server);
@@ -203,6 +217,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		}
 		done.set(true);
 		gateway.stop();
+		ccf.stop();
 		serverSocket.get().close();
 	}
 
@@ -210,8 +225,8 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 	public void testGoodNetTimeout() throws Exception {
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -250,12 +265,12 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		Future<Integer>[] results = (Future<Integer>[]) new Future<?>[2];
 		for (int i = 0; i < 2; i++) {
 			final int j = i;
-			results[j] = (Executors.newSingleThreadExecutor().submit(() -> {
+			results[j] = (this.executor.submit(() -> {
 				gateway.handleMessage(MessageBuilder.withPayload("Test" + j).build());
 				return 0;
 			}));
 		}
-		Set<String> replies = new HashSet<String>();
+		Set<String> replies = new HashSet<>();
 		int timeouts = 0;
 		for (int i = 0; i < 2; i++) {
 			try {
@@ -284,6 +299,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		}
 		done.set(true);
 		gateway.stop();
+		ccf.stop();
 		serverSocket.get().close();
 	}
 
@@ -334,7 +350,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		final AtomicReference<String> lastReceived = new AtomicReference<String>();
 		final CountDownLatch serverLatch = new CountDownLatch(2);
 
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				latch.countDown();
 				int i = 0;
@@ -388,7 +404,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 
 		for (int i = 0; i < 2; i++) {
 			final int j = i;
-			results[j] = (Executors.newSingleThreadExecutor().submit(() -> {
+			results[j] = (this.executor.submit(() -> {
 				gateway.handleMessage(MessageBuilder.withPayload("Test" + j).build());
 				return j;
 			}));
@@ -423,6 +439,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		done.set(true);
 		assertEquals(0, TestUtils.getPropertyValue(gateway, "pendingReplies", Map.class).size());
 		gateway.stop();
+		ccf.stop();
 	}
 
 	@Test
@@ -432,7 +449,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		final AtomicBoolean done = new AtomicBoolean();
 		final CountDownLatch serverLatch = new CountDownLatch(1);
 
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -502,17 +519,18 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		done.set(true);
 		gateway.stop();
 		verify(mockConn1).send(Mockito.any(Message.class));
+		factory2.stop();
 		serverSocket.get().close();
 	}
 
 	@Test
 	public void testFailoverCached() throws Exception {
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
 		final CountDownLatch serverLatch = new CountDownLatch(1);
 
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -585,6 +603,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		done.set(true);
 		gateway.stop();
 		verify(mockConn1).send(Mockito.any(Message.class));
+		factory2.stop();
 		serverSocket.get().close();
 	}
 
@@ -657,11 +676,11 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 			final ServerSocket server) throws Exception {
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		final AtomicReference<String> lastReceived = new AtomicReference<String>();
+		final AtomicReference<String> lastReceived = new AtomicReference<>();
 		final CountDownLatch serverLatch = new CountDownLatch(1);
 
-		Executors.newSingleThreadExecutor().execute(() -> {
-			List<Socket> sockets = new ArrayList<Socket>();
+		this.executor.execute(() -> {
+			List<Socket> sockets = new ArrayList<>();
 			try {
 				latch.countDown();
 				while (!done.get()) {
@@ -711,7 +730,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 			fail("expected failure");
 		}
 		catch (Exception e) {
-			assertThat(e.getCause(), instanceOf(EOFException.class));
+			assertThat(e.getCause().getCause(), instanceOf(EOFException.class));
 		}
 		assertEquals(0, TestUtils.getPropertyValue(gateway, "pendingReplies", Map.class).size());
 		Message<?> reply = replyChannel.receive(0);
@@ -783,8 +802,8 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
 
-		Executors.newSingleThreadExecutor().execute(() -> {
-			List<Socket> sockets = new ArrayList<Socket>();
+		this.executor.execute(() -> {
+			List<Socket> sockets = new ArrayList<>();
 			try {
 				latch.countDown();
 				while (!done.get()) {
@@ -820,7 +839,7 @@ public class TcpOutboundGatewayTests extends LogAdjustingTestSupport {
 			fail("expected failure");
 		}
 		catch (Exception e) {
-			assertThat(e.getCause(), instanceOf(SocketTimeoutException.class));
+			assertThat(e.getCause().getCause(), instanceOf(SocketTimeoutException.class));
 		}
 		assertEquals(0, TestUtils.getPropertyValue(gateway, "pendingReplies", Map.class).size());
 		Message<?> reply = replyChannel.receive(0);

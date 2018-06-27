@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2017 the original author or authors.
+ * Copyright 2014-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package org.springframework.integration.handler;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -64,17 +63,19 @@ import reactor.core.publisher.Mono;
 public abstract class AbstractMessageProducingHandler extends AbstractMessageHandler
 		implements MessageProducer, HeaderPropagationAware {
 
-	private final Set<String> notPropagatedHeaders = new HashSet<String>();
-
 	protected final MessagingTemplate messagingTemplate = new MessagingTemplate();
 
-	private volatile MessageChannel outputChannel;
+	private boolean async;
 
-	private volatile String outputChannelName;
+	private String outputChannelName;
 
-	private volatile boolean async;
+	private MessageChannel outputChannel;
+
+	private String[] notPropagatedHeaders;
 
 	private boolean selectiveHeaderPropagation;
+
+	private boolean noHeadersPropagation;
 
 	/**
 	 * Set the timeout for sending reply Messages.
@@ -115,41 +116,70 @@ public abstract class AbstractMessageProducingHandler extends AbstractMessageHan
 	}
 
 	/**
-	 * Set headers that will NOT be copied from the inbound message if
+	 * Set header patterns ("xxx*", "*xxx", "*xxx*" or "xxx*yyy")
+	 * that will NOT be copied from the inbound message if
 	 * {@link #shouldCopyRequestHeaders() shouldCopyRequestHeaaders} is true.
+	 * At least one pattern as "*" means do not copy headers at all.
 	 * @param headers the headers to not propagate from the inbound message.
 	 * @since 4.3.10
+	 * @see org.springframework.util.PatternMatchUtils
 	 */
 	@Override
 	public void setNotPropagatedHeaders(String... headers) {
 		updateNotPropagatedHeaders(headers, false);
 	}
 
-	private void updateNotPropagatedHeaders(String[] headers, boolean merge) {
+	/**
+	 * Set or replace not propagated headers. Exposed so that subclasses can set specific
+	 * headers in a constructor, since {@link #setNotPropagatedHeaders(String...)} is not
+	 * final.
+	 * @param headers Header patterns to not propagate.
+	 * @param merge true to merge with existing patterns; false to replace.
+	 * @since 5.0.2
+	 */
+	protected final void updateNotPropagatedHeaders(String[] headers, boolean merge) {
+		Set<String> headerPatterns = new HashSet<>();
+
+		if (merge && this.notPropagatedHeaders != null) {
+			headerPatterns.addAll(Arrays.asList(this.notPropagatedHeaders));
+		}
+
 		if (!ObjectUtils.isEmpty(headers)) {
 			Assert.noNullElements(headers, "null elements are not allowed in 'headers'");
-			if (!merge) {
-				this.notPropagatedHeaders.clear();
-			}
-			this.notPropagatedHeaders.addAll(Arrays.asList(headers));
+
+			headerPatterns.addAll(Arrays.asList(headers));
+
+			this.notPropagatedHeaders = headerPatterns.toArray(new String[0]);
 		}
-		this.selectiveHeaderPropagation = this.notPropagatedHeaders.size() > 0;
+
+		boolean hasAsterisk = headerPatterns.contains("*");
+
+		if (hasAsterisk) {
+			this.notPropagatedHeaders = new String[] { "*" };
+			this.noHeadersPropagation = true;
+		}
+
+		this.selectiveHeaderPropagation = !ObjectUtils.isEmpty(this.notPropagatedHeaders);
 	}
 
 	/**
-	 * Get the header names this handler doesn't propagate.
+	 * Get the header patterns this handler doesn't propagate.
 	 * @return an immutable {@link java.util.Collection} of headers that will not be
 	 * copied from the inbound message if {@link #shouldCopyRequestHeaders()} is true.
 	 * @since 4.3.10
 	 * @see #setNotPropagatedHeaders(String...)
+	 * @see org.springframework.util.PatternMatchUtils
 	 */
 	@Override
 	public Collection<String> getNotPropagatedHeaders() {
-		return Collections.unmodifiableSet(this.notPropagatedHeaders);
+		return this.notPropagatedHeaders != null
+				? Collections.unmodifiableSet(new HashSet<>(Arrays.asList(this.notPropagatedHeaders)))
+				: Collections.emptyList();
 	}
 
 	/**
-	 * Add headers that will NOT be copied from the inbound message if
+	 * Add header patterns ("xxx*", "*xxx", "*xxx*" or "xxx*yyy")
+	 * that will NOT be copied from the inbound message if
 	 * {@link #shouldCopyRequestHeaders()} is true, instead of overwriting the existing
 	 * set.
 	 * @param headers the headers to not propagate from the inbound message.
@@ -344,7 +374,7 @@ public abstract class AbstractMessageProducingHandler extends AbstractMessageHan
 	protected Message<?> createOutputMessage(Object output, MessageHeaders requestHeaders) {
 		AbstractIntegrationMessageBuilder<?> builder = null;
 		if (output instanceof Message<?>) {
-			if (!this.shouldCopyRequestHeaders()) {
+			if (this.noHeadersPropagation || !shouldCopyRequestHeaders()) {
 				return (Message<?>) output;
 			}
 			builder = this.getMessageBuilderFactory().fromMessage((Message<?>) output);
@@ -355,17 +385,9 @@ public abstract class AbstractMessageProducingHandler extends AbstractMessageHan
 		else {
 			builder = this.getMessageBuilderFactory().withPayload(output);
 		}
-		if (this.shouldCopyRequestHeaders()) {
-			if (this.selectiveHeaderPropagation) {
-				Map<String, Object> headersToCopy = new HashMap<String, Object>(requestHeaders);
-				for (String header : this.notPropagatedHeaders) {
-					headersToCopy.remove(header);
-				}
-				builder.copyHeadersIfAbsent(headersToCopy);
-			}
-			else {
-				builder.copyHeadersIfAbsent(requestHeaders);
-			}
+		if (!this.noHeadersPropagation && shouldCopyRequestHeaders()) {
+			builder.filterAndCopyHeadersIfAbsent(requestHeaders,
+					this.selectiveHeaderPropagation ? this.notPropagatedHeaders : null);
 		}
 		return builder.build();
 	}

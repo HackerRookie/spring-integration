@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2017 the original author or authors.
+ * Copyright 2013-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package org.springframework.integration.amqp.inbound;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.notNullValue;
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -47,16 +48,17 @@ import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.connection.Connection;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.amqp.rabbit.core.ChannelAwareMessageListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
+import org.springframework.amqp.rabbit.listener.api.ChannelAwareMessageListener;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConversionException;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.amqp.support.converter.SimpleMessageConverter;
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.integration.StaticMessageHeaderAccessor;
 import org.springframework.integration.amqp.support.AmqpMessageHeaderErrorMessageStrategy;
 import org.springframework.integration.amqp.support.DefaultAmqpHeaderMapper;
 import org.springframework.integration.channel.DirectChannel;
@@ -79,6 +81,7 @@ import com.rabbitmq.client.Channel;
 /**
  * @author Artem Bilan
  * @author Gary Russell
+ *
  * @since 3.0
  */
 public class InboundEndpointTests {
@@ -236,17 +239,11 @@ public class InboundEndpointTests {
 		adapter.setOutputChannel(outputChannel);
 		QueueChannel errorChannel = new QueueChannel();
 		adapter.setErrorChannel(errorChannel);
-		adapter.setMessageConverter(new MessageConverter() {
-
-			@Override
-			public org.springframework.amqp.core.Message toMessage(Object object, MessageProperties messageProperties)
-					throws MessageConversionException {
-				throw new MessageConversionException("intended");
-			}
+		adapter.setMessageConverter(new SimpleMessageConverter() {
 
 			@Override
 			public Object fromMessage(org.springframework.amqp.core.Message message) throws MessageConversionException {
-				return null;
+				throw new MessageConversionException("intended");
 			}
 
 		});
@@ -307,9 +304,11 @@ public class InboundEndpointTests {
 		Message<?> errorMessage = errors.receive(0);
 		assertNotNull(errorMessage);
 		assertThat(errorMessage.getPayload(), instanceOf(MessagingException.class));
-		assertThat(((MessagingException) errorMessage.getPayload()).getMessage(), containsString("Dispatcher has no"));
+		MessagingException payload = (MessagingException) errorMessage.getPayload();
+		assertThat(payload.getMessage(), containsString("Dispatcher has no"));
+		assertThat(StaticMessageHeaderAccessor.getDeliveryAttempt(payload.getFailedMessage()).get(), equalTo(3));
 		org.springframework.amqp.core.Message amqpMessage = errorMessage.getHeaders()
-				.get(AmqpMessageHeaderErrorMessageStrategy.AMQP_RAW_MESSAGE, org.springframework.amqp.core.Message.class);
+			.get(AmqpMessageHeaderErrorMessageStrategy.AMQP_RAW_MESSAGE, org.springframework.amqp.core.Message.class);
 		assertThat(amqpMessage, notNullValue());
 		assertNull(errors.receive(0));
 	}
@@ -332,9 +331,11 @@ public class InboundEndpointTests {
 		Message<?> errorMessage = errors.receive(0);
 		assertNotNull(errorMessage);
 		assertThat(errorMessage.getPayload(), instanceOf(MessagingException.class));
-		assertThat(((MessagingException) errorMessage.getPayload()).getMessage(), containsString("Dispatcher has no"));
+		MessagingException payload = (MessagingException) errorMessage.getPayload();
+		assertThat(payload.getMessage(), containsString("Dispatcher has no"));
+		assertThat(StaticMessageHeaderAccessor.getDeliveryAttempt(payload.getFailedMessage()).get(), equalTo(3));
 		org.springframework.amqp.core.Message amqpMessage = errorMessage.getHeaders()
-				.get(AmqpMessageHeaderErrorMessageStrategy.AMQP_RAW_MESSAGE, org.springframework.amqp.core.Message.class);
+			.get(AmqpMessageHeaderErrorMessageStrategy.AMQP_RAW_MESSAGE, org.springframework.amqp.core.Message.class);
 		assertThat(amqpMessage, notNullValue());
 		assertNull(errors.receive(0));
 	}

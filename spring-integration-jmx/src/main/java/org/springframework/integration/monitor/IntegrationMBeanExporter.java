@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,16 +44,15 @@ import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.EmbeddedValueResolverAware;
 import org.springframework.context.Lifecycle;
 import org.springframework.integration.channel.QueueChannel;
+import org.springframework.integration.config.IntegrationManagementConfigurer;
 import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.context.OrderlyShutdownCapable;
 import org.springframework.integration.core.MessageProducer;
 import org.springframework.integration.endpoint.AbstractEndpoint;
-import org.springframework.integration.endpoint.MessageSourceManagement;
 import org.springframework.integration.gateway.MessagingGatewaySupport;
 import org.springframework.integration.handler.AbstractMessageProducingHandler;
 import org.springframework.integration.history.MessageHistoryConfigurer;
 import org.springframework.integration.support.context.NamedComponent;
-import org.springframework.integration.support.management.IntegrationManagementConfigurer;
 import org.springframework.integration.support.management.LifecycleMessageHandlerMetrics;
 import org.springframework.integration.support.management.LifecycleMessageSourceManagement;
 import org.springframework.integration.support.management.LifecycleMessageSourceMetrics;
@@ -63,12 +62,14 @@ import org.springframework.integration.support.management.LifecycleTrackableMess
 import org.springframework.integration.support.management.MappingMessageRouterManagement;
 import org.springframework.integration.support.management.MessageChannelMetrics;
 import org.springframework.integration.support.management.MessageHandlerMetrics;
+import org.springframework.integration.support.management.MessageSourceManagement;
 import org.springframework.integration.support.management.MessageSourceMetrics;
 import org.springframework.integration.support.management.PollableChannelManagement;
 import org.springframework.integration.support.management.RouterMetrics;
 import org.springframework.integration.support.management.Statistics;
 import org.springframework.integration.support.management.TrackableComponent;
 import org.springframework.integration.support.management.TrackableRouterMetrics;
+import org.springframework.integration.support.utils.PatternMatchUtils;
 import org.springframework.jmx.export.MBeanExporter;
 import org.springframework.jmx.export.UnableToRegisterMBeanException;
 import org.springframework.jmx.export.annotation.ManagedAttribute;
@@ -79,7 +80,6 @@ import org.springframework.jmx.support.MetricType;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHandler;
 import org.springframework.util.Assert;
-import org.springframework.util.PatternMatchUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringValueResolver;
 
@@ -109,6 +109,7 @@ import org.springframework.util.StringValueResolver;
  * @author Oleg Zhurakousky
  * @author Gary Russell
  * @author Artem Bilan
+ * @author Meherzad Lahewala
  */
 @org.springframework.jmx.export.annotation.ManagedResource
 public class IntegrationMBeanExporter extends MBeanExporter implements ApplicationContextAware,
@@ -122,31 +123,32 @@ public class IntegrationMBeanExporter extends MBeanExporter implements Applicati
 
 	private ApplicationContext applicationContext;
 
-	private final Map<Object, AtomicLong> anonymousHandlerCounters = new HashMap<Object, AtomicLong>();
+	private final Map<Object, AtomicLong> anonymousHandlerCounters = new HashMap<>();
 
-	private final Map<Object, AtomicLong> anonymousSourceCounters = new HashMap<Object, AtomicLong>();
+	private final Map<Object, AtomicLong> anonymousSourceCounters = new HashMap<>();
 
-	private final Set<MessageHandlerMetrics> handlers = new HashSet<MessageHandlerMetrics>();
+	private final Set<MessageHandlerMetrics> handlers = new HashSet<>();
 
-	private final Set<MessageSourceMetrics> sources = new HashSet<MessageSourceMetrics>();
+	private final Set<MessageSourceMetrics> sources = new HashSet<>();
 
-	private final Set<Lifecycle> inboundLifecycleMessageProducers = new HashSet<Lifecycle>();
+	private final Set<Lifecycle> inboundLifecycleMessageProducers = new HashSet<>();
 
-	private final Set<MessageChannelMetrics> channels = new HashSet<MessageChannelMetrics>();
+	private final Set<MessageChannelMetrics> channels = new HashSet<>();
 
-	private final Map<String, MessageChannelMetrics> allChannelsByName = new HashMap<String, MessageChannelMetrics>();
+	private final Map<String, MessageChannelMetrics> allChannelsByName = new HashMap<>();
 
-	private final Map<String, MessageHandlerMetrics> allHandlersByName = new HashMap<String, MessageHandlerMetrics>();
+	private final Map<String, MessageHandlerMetrics> allHandlersByName = new HashMap<>();
 
-	private final Map<String, MessageSourceMetrics> allSourcesByName = new HashMap<String, MessageSourceMetrics>();
+	private final Map<String, MessageSourceMetrics> allSourcesByName = new HashMap<>();
 
-	private final Map<String, String> beansByEndpointName = new HashMap<String, String>();
+	private final Map<String, String> beansByEndpointName = new HashMap<>();
 
 	private String domain = DEFAULT_DOMAIN;
 
 	private final Properties objectNameStaticProperties = new Properties();
 
-	private final MetadataNamingStrategy defaultNamingStrategy = new IntegrationMetadataNamingStrategy(this.attributeSource);
+	private final MetadataNamingStrategy defaultNamingStrategy =
+			new IntegrationMetadataNamingStrategy(this.attributeSource);
 
 	private String[] componentNamePatterns = { "*" };
 
@@ -299,7 +301,7 @@ public class IntegrationMBeanExporter extends MBeanExporter implements Applicati
 
 	private MessageHandler handlerInAnonymousWrapper(final Object bean) {
 		if (bean != null && bean.getClass().isAnonymousClass()) {
-			final AtomicReference<MessageHandler> wrapped = new AtomicReference<MessageHandler>();
+			final AtomicReference<MessageHandler> wrapped = new AtomicReference<>();
 			ReflectionUtils.doWithFields(bean.getClass(), field -> {
 				field.setAccessible(true);
 				Object handler = field.get(bean);
@@ -319,7 +321,7 @@ public class IntegrationMBeanExporter extends MBeanExporter implements Applicati
 	 * and risk it being a proxy (which it almost certainly is by now).
 	 *
 	 * @param bean the bean instance to register
-	 * @param beanKey the bean name or human readable version if autogenerated
+	 * @param beanKey the bean name or human readable version if auto-generated
 	 * @return the JMX object name of the MBean that was registered
 	 */
 	private ObjectName registerBeanInstance(Object bean, String beanKey) {
@@ -677,7 +679,7 @@ public class IntegrationMBeanExporter extends MBeanExporter implements Applicati
 
 	private void registerEndpoints() {
 		String[] names = this.applicationContext.getBeanNamesForType(AbstractEndpoint.class);
-		Set<String> endpointNames = new HashSet<String>();
+		Set<String> endpointNames = new HashSet<>();
 		for (String name : names) {
 			if (!this.beansByEndpointName.values().contains(name)) {
 				AbstractEndpoint endpoint = this.applicationContext.getBean(name, AbstractEndpoint.class);
@@ -721,35 +723,8 @@ public class IntegrationMBeanExporter extends MBeanExporter implements Applicati
 	 * @return true if positive match, false if no match or negative match.
 	 */
 	private boolean matches(String[] patterns, String name) {
-		Boolean match = smartMatch(patterns, name);
+		Boolean match = PatternMatchUtils.smartMatch(name, patterns);
 		return match == null ? false : match;
-	}
-
-	/**
-	 * Simple pattern match against the supplied patterns; also supports negated ('!')
-	 * patterns. First match wins (positive or negative).
-	 * @param patterns the patterns.
-	 * @param name the name to match.
-	 * @return null if no match; true for positive match; false for negative match.
-	 */
-	private Boolean smartMatch(String[] patterns, String name) {
-		if (patterns != null) {
-			for (String pattern : patterns) {
-				boolean reverse = false;
-				String patternToUse = pattern;
-				if (pattern.startsWith("!")) {
-					reverse = true;
-					patternToUse = pattern.substring(1);
-				}
-				else if (pattern.startsWith("\\")) {
-					patternToUse = pattern.substring(1);
-				}
-				if (PatternMatchUtils.simpleMatch(patternToUse, name)) {
-					return !reverse;
-				}
-			}
-		}
-		return null; //NOSONAR - intentional null return
 	}
 
 	private Object extractTarget(Object bean) {

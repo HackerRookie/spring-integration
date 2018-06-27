@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2014-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,10 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
+import org.apache.tomcat.websocket.Constants;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -54,21 +57,21 @@ import org.springframework.messaging.support.GenericMessage;
 import org.springframework.stereotype.Component;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.StompSubProtocolHandler;
 import org.springframework.web.socket.messaging.SubProtocolHandler;
 import org.springframework.web.socket.sockjs.client.SockJsClient;
-import org.springframework.web.socket.sockjs.client.Transport;
 import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 
 /**
  * @author Artem Bilan
+ *
  * @since 4.1
  */
-@ContextConfiguration
-@RunWith(SpringJUnit4ClassRunner.class)
+@ContextConfiguration(classes = WebSocketClientTests.ClientConfig.class)
+@RunWith(SpringRunner.class)
 @DirtiesContext
 public class WebSocketClientTests {
 
@@ -81,8 +84,8 @@ public class WebSocketClientTests {
 	private QueueChannel webSocketInputChannel;
 
 	@Test
-	public void testWebSocketOutboundMessageHandler() throws Exception {
-		this.webSocketOutputChannel.send(new GenericMessage<String>("Spring"));
+	public void testWebSocketOutboundMessageHandler() {
+		this.webSocketOutputChannel.send(new GenericMessage<>("Spring"));
 
 		Message<?> received = this.webSocketInputChannel.receive(10000);
 		assertNotNull(received);
@@ -96,7 +99,7 @@ public class WebSocketClientTests {
 
 	@Configuration
 	@EnableIntegration
-	public static class ContextConfiguration {
+	public static class ClientConfig {
 
 		@Bean
 		public TomcatWebSocketTestServer server() {
@@ -105,7 +108,11 @@ public class WebSocketClientTests {
 
 		@Bean
 		public WebSocketClient webSocketClient() {
-			return new SockJsClient(Collections.<Transport>singletonList(new WebSocketTransport(new StandardWebSocketClient())));
+			StandardWebSocketClient webSocketClient = new StandardWebSocketClient();
+			Map<String, Object> userProperties = new HashMap<>();
+			userProperties.put(Constants.IO_TIMEOUT_MS_PROPERTY, "" + (Constants.IO_TIMEOUT_MS_DEFAULT * 6));
+			webSocketClient.setUserProperties(userProperties);
+			return new SockJsClient(Collections.singletonList(new WebSocketTransport(webSocketClient)));
 		}
 
 		@Bean

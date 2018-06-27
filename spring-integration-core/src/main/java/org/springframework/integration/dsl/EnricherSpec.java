@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import java.util.Map;
 import java.util.function.Function;
 
 import org.springframework.expression.Expression;
-import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.config.ConsumerEndpointFactoryBean;
 import org.springframework.integration.expression.FunctionExpression;
 import org.springframework.integration.expression.ValueExpression;
@@ -42,15 +41,15 @@ import reactor.util.function.Tuple2;
  * @author Artem Bilan
  * @author Tim Ysewyn
  * @author Ian Bondoc
+ * @author Alexis Hafner
  *
  * @since 5.0
  */
 public class EnricherSpec extends ConsumerEndpointSpec<EnricherSpec, ContentEnricher> {
 
-	private final Map<String, Expression> propertyExpressions = new HashMap<String, Expression>();
+	private final Map<String, Expression> propertyExpressions = new HashMap<>();
 
-	private final Map<String, HeaderValueMessageProcessor<?>> headerExpressions =
-			new HashMap<String, HeaderValueMessageProcessor<?>>();
+	private final Map<String, HeaderValueMessageProcessor<?>> headerExpressions = new HashMap<>();
 
 	EnricherSpec() {
 		super(new ContentEnricher());
@@ -93,6 +92,28 @@ public class EnricherSpec extends ConsumerEndpointSpec<EnricherSpec, ContentEnri
 	 */
 	public EnricherSpec replyChannel(String replyChannel) {
 		this.handler.setReplyChannelName(replyChannel);
+		return _this();
+	}
+
+	/**
+	 * @param errorChannel the error channel.
+	 * @return the enricher spec.
+	 * @see ContentEnricher#setErrorChannel(MessageChannel)
+	 * @since 5.0.1
+	 */
+	public EnricherSpec errorChannel(MessageChannel errorChannel) {
+		this.handler.setErrorChannel(errorChannel);
+		return _this();
+	}
+
+	/**
+	 * @param errorChannel the name of the error channel bean.
+	 * @return the enricher spec.
+	 * @see ContentEnricher#setErrorChannelName(String)
+	 * @since 5.0.1
+	 */
+	public EnricherSpec errorChannel(String errorChannel) {
+		this.handler.setErrorChannelName(errorChannel);
 		return _this();
 	}
 
@@ -144,15 +165,7 @@ public class EnricherSpec extends ConsumerEndpointSpec<EnricherSpec, ContentEnri
 	 * @return the enricher spec
 	 */
 	public EnricherSpec requestSubFlow(IntegrationFlow subFlow) {
-		Assert.notNull(subFlow, "'subFlow' must not be null");
-
-		DirectChannel requestChannel = new DirectChannel();
-		IntegrationFlowBuilder flowBuilder = IntegrationFlows.from(requestChannel);
-		subFlow.configure(flowBuilder);
-
-		this.componentsToRegister.put(flowBuilder.get(), null);
-
-		return requestChannel(requestChannel);
+		return requestChannel(obtainInputChannelFromFlow(subFlow));
 	}
 
 	/**
@@ -173,7 +186,7 @@ public class EnricherSpec extends ConsumerEndpointSpec<EnricherSpec, ContentEnri
 	 * @see ContentEnricher#setPropertyExpressions(Map)
 	 */
 	public <V> EnricherSpec property(String key, V value) {
-		this.propertyExpressions.put(key, new ValueExpression<V>(value));
+		this.propertyExpressions.put(key, new ValueExpression<>(value));
 		return _this();
 	}
 
@@ -211,7 +224,7 @@ public class EnricherSpec extends ConsumerEndpointSpec<EnricherSpec, ContentEnri
 	 * @see ContentEnricher#setHeaderExpressions(Map)
 	 */
 	public <V> EnricherSpec header(String name, V value) {
-		return this.header(name, value, null);
+		return header(name, value, null);
 	}
 
 	/**

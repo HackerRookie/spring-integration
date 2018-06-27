@@ -1,5 +1,5 @@
 /*
- * Copyright 2009-2016 the original author or authors.
+ * Copyright 2009-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author Dave Syer
  * @author Helena Edelson
  * @author Gary Russell
+ * @author Ivan Krizsan
+ *
  * @since 2.0
  */
 public class DefaultMessageChannelMetrics extends AbstractMessageChannelMetrics {
@@ -61,12 +63,12 @@ public class DefaultMessageChannelMetrics extends AbstractMessageChannelMetrics 
 	 */
 	public DefaultMessageChannelMetrics(String name) {
 		this(name, new ExponentialMovingAverage(DEFAULT_MOVING_AVERAGE_WINDOW, 1000000.),
-		new ExponentialMovingAverageRate(
-				ONE_SECOND_SECONDS, ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true),
-		new ExponentialMovingAverageRatio(
-				ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true),
-		new ExponentialMovingAverageRate(
-				ONE_SECOND_SECONDS, ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true));
+				new ExponentialMovingAverageRate(
+						ONE_SECOND_SECONDS, ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true),
+				new ExponentialMovingAverageRatio(
+						ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true),
+				new ExponentialMovingAverageRate(
+						ONE_SECOND_SECONDS, ONE_MINUTE_SECONDS, DEFAULT_MOVING_AVERAGE_WINDOW, true));
 	}
 
 	/**
@@ -83,6 +85,7 @@ public class DefaultMessageChannelMetrics extends AbstractMessageChannelMetrics 
 	public DefaultMessageChannelMetrics(String name, ExponentialMovingAverage sendDuration,
 			ExponentialMovingAverageRate sendErrorRate, ExponentialMovingAverageRatio sendSuccessRatio,
 			ExponentialMovingAverageRate sendRate) {
+
 		super(name);
 		this.sendDuration = sendDuration;
 		this.sendErrorRate = sendErrorRate;
@@ -109,10 +112,12 @@ public class DefaultMessageChannelMetrics extends AbstractMessageChannelMetrics 
 
 	@Override
 	public void afterSend(MetricsContext context, boolean result) {
-		if (result && isFullStatsEnabled()) {
-			long now = System.nanoTime();
-			this.sendSuccessRatio.success(now);
-			this.sendDuration.append(now - ((DefaultChannelMetricsContext) context).start);
+		if (result) {
+			if (isFullStatsEnabled()) {
+				long now = System.nanoTime();
+				this.sendSuccessRatio.success(now);
+				this.sendDuration.append(now - ((DefaultChannelMetricsContext) context).start);
+			}
 		}
 		else {
 			if (isFullStatsEnabled()) {

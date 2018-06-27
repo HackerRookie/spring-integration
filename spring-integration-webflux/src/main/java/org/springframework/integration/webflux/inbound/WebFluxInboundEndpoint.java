@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 the original author or authors.
+ * Copyright 2017-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 
 package org.springframework.integration.webflux.inbound;
 
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -35,8 +37,10 @@ import org.springframework.expression.Expression;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.HttpMessageReader;
 import org.springframework.http.codec.HttpMessageWriter;
 import org.springframework.http.codec.ServerCodecConfigurer;
@@ -74,6 +78,8 @@ import reactor.core.publisher.Mono;
 public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements WebHandler {
 
 	private static final MediaType MEDIA_TYPE_APPLICATION_ALL = new MediaType("application");
+
+	private static final List<HttpMethod> SAFE_METHODS = Arrays.asList(HttpMethod.GET, HttpMethod.HEAD);
 
 	private ServerCodecConfigurer codecConfigurer = ServerCodecConfigurer.create();
 
@@ -120,7 +126,7 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 
 	@Override
 	public String getComponentType() {
-		return super.getComponentType().replaceFirst("(http:)", "$1webflux-");
+		return super.getComponentType().replaceFirst("http", "webflux");
 	}
 
 	@Override
@@ -144,8 +150,9 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 	private Mono<Void> doHandle(ServerWebExchange exchange) {
 		return extractRequestBody(exchange)
 				.doOnSubscribe(s -> this.activeCount.incrementAndGet())
+				.switchIfEmpty(Mono.just(exchange.getRequest().getQueryParams()))
 				.map(body -> new HttpEntity<>(body, exchange.getRequest().getHeaders()))
-				.map(entity -> buildMessage(entity, exchange))
+				.flatMap(entity -> buildMessage(entity, exchange))
 				.flatMap(requestMessage -> {
 					if (this.expectReply) {
 						return sendAndReceiveMessageReactive(requestMessage)
@@ -228,7 +235,7 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 	}
 
 	@SuppressWarnings("unchecked")
-	private Message<?> buildMessage(HttpEntity<?> httpEntity, ServerWebExchange exchange) {
+	private Mono<Message<?>> buildMessage(HttpEntity<?> httpEntity, ServerWebExchange exchange) {
 		ServerHttpRequest request = exchange.getRequest();
 		HttpHeaders requestHeaders = request.getHeaders();
 		Map<String, Object> exchangeAttributes = exchange.getAttributes();
@@ -261,10 +268,6 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 		Object payload;
 		if (getPayloadExpression() != null) {
 			payload = getPayloadExpression().getValue(evaluationContext);
-			if (payload == null) {
-				throw new IllegalStateException("The payload expression '" + getPayloadExpression().getExpressionString()
-						+ "' returned null.");
-			}
 		}
 		else {
 			payload = httpEntity.getBody();
@@ -282,12 +285,16 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 			}
 		}
 
-		AbstractIntegrationMessageBuilder<?> messageBuilder;
+		if (payload == null) {
+			payload = requestParams;
+		}
+
+		AbstractIntegrationMessageBuilder<Object> messageBuilder;
 
 		if (payload instanceof Message<?>) {
 			messageBuilder =
 					getMessageBuilderFactory()
-							.fromMessage((Message<?>) payload)
+							.fromMessage((Message<Object>) payload)
 							.copyHeadersIfAbsent(headers);
 		}
 		else {
@@ -297,11 +304,17 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 							.copyHeaders(headers);
 		}
 
-		return messageBuilder
+		messageBuilder
 				.setHeader(org.springframework.integration.http.HttpHeaders.REQUEST_URL, request.getURI().toString())
-				.setHeader(org.springframework.integration.http.HttpHeaders.REQUEST_METHOD, request.getMethod().toString())
-				.setHeader(org.springframework.integration.http.HttpHeaders.USER_PRINCIPAL, exchange.getPrincipal().block())
-				.build();
+				.setHeader(org.springframework.integration.http.HttpHeaders.REQUEST_METHOD,
+						request.getMethod().toString());
+
+		return exchange.getPrincipal()
+				.map(principal ->
+						messageBuilder
+								.setHeader(org.springframework.integration.http.HttpHeaders.USER_PRINCIPAL, principal))
+				.defaultIfEmpty(messageBuilder)
+				.map(AbstractIntegrationMessageBuilder::build);
 	}
 
 	private Mono<Void> populateResponse(ServerWebExchange exchange, Message<?> replyMessage) {
@@ -318,12 +331,44 @@ public class WebFluxInboundEndpoint extends BaseHttpInboundEndpoint implements W
 			return response.setComplete();
 		}
 		else {
-			HttpStatus httpStatus = resolveHttpStatusFromHeaders(replyMessage.getHeaders());
+			final HttpStatus httpStatus = resolveHttpStatusFromHeaders(replyMessage.getHeaders());
 			if (httpStatus != null) {
 				response.setStatusCode(httpStatus);
 			}
 
-			return writeResponseBody(exchange, responseContent);
+			if (responseContent instanceof ResponseEntity) {
+				return Mono.just((ResponseEntity<?>) responseContent)
+						.flatMap(e -> {
+							if (httpStatus == null) {
+								exchange.getResponse().setStatusCode(e.getStatusCode());
+							}
+
+							HttpHeaders entityHeaders = e.getHeaders();
+							HttpHeaders responseHeaders = exchange.getResponse().getHeaders();
+
+							if (!entityHeaders.isEmpty()) {
+								entityHeaders.entrySet().stream()
+										.filter(entry -> !responseHeaders.containsKey(entry.getKey()))
+										.forEach(entry -> responseHeaders.put(entry.getKey(), entry.getValue()));
+							}
+
+							if (e.getBody() == null) {
+								return exchange.getResponse().setComplete();
+							}
+
+							String etag = entityHeaders.getETag();
+							Instant lastModified = Instant.ofEpochMilli(entityHeaders.getLastModified());
+							HttpMethod httpMethod = exchange.getRequest().getMethod();
+							if (SAFE_METHODS.contains(httpMethod) && exchange.checkNotModified(etag, lastModified)) {
+								return exchange.getResponse().setComplete();
+							}
+
+							return writeResponseBody(exchange, e.getBody());
+						});
+			}
+			else {
+				return writeResponseBody(exchange, responseContent);
+			}
 		}
 	}
 

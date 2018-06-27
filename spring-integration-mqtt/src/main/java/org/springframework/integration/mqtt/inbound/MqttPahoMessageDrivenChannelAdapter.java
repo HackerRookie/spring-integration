@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,6 +43,8 @@ import org.springframework.util.Assert;
  * Eclipse Paho Implementation.
  *
  * @author Gary Russell
+ * @author Artem Bilan
+ *
  * @since 1.0
  *
  */
@@ -172,6 +174,9 @@ public class MqttPahoMessageDrivenChannelAdapter extends AbstractMqttMessageDriv
 			catch (MqttException e) {
 				logger.error("Exception while disconnecting", e);
 			}
+
+			this.client.setCallback(null);
+
 			try {
 				this.client.close();
 			}
@@ -257,6 +262,14 @@ public class MqttPahoMessageDrivenChannelAdapter extends AbstractMqttMessageDriv
 			}
 			logger.error("Error connecting or subscribing to " + Arrays.toString(topics), e);
 			this.client.disconnectForcibly(this.completionTimeout);
+			try {
+				this.client.setCallback(null);
+				this.client.close();
+			}
+			catch (MqttException e1) {
+				// NOSONAR
+			}
+			this.client = null;
 			throw e;
 		}
 		finally {
@@ -308,11 +321,21 @@ public class MqttPahoMessageDrivenChannelAdapter extends AbstractMqttMessageDriv
 
 	@Override
 	public synchronized void connectionLost(Throwable cause) {
-		this.logger.error("Lost connection:" + cause.getMessage() + "; retrying...");
-		this.connected = false;
-		scheduleReconnect();
-		if (this.applicationEventPublisher != null) {
-			this.applicationEventPublisher.publishEvent(new MqttConnectionFailedEvent(this, cause));
+		if (isRunning()) {
+			this.logger.error("Lost connection: " + cause.getMessage() + "; retrying...");
+			this.connected = false;
+			try {
+				this.client.setCallback(null);
+				this.client.close();
+			}
+			catch (MqttException e) {
+				// NOSONAR
+			}
+			this.client = null;
+			scheduleReconnect();
+			if (this.applicationEventPublisher != null) {
+				this.applicationEventPublisher.publishEvent(new MqttConnectionFailedEvent(this, cause));
+			}
 		}
 	}
 

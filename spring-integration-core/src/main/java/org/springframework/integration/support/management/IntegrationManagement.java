@@ -16,6 +16,7 @@
 
 package org.springframework.integration.support.management;
 
+import org.springframework.integration.support.management.metrics.MetricsCaptor;
 import org.springframework.jmx.export.annotation.ManagedAttribute;
 import org.springframework.jmx.export.annotation.ManagedOperation;
 
@@ -27,6 +28,12 @@ import org.springframework.jmx.export.annotation.ManagedOperation;
  *
  */
 public interface IntegrationManagement {
+
+	String METER_PREFIX = "spring.integration.";
+
+	String SEND_TIMER_NAME = METER_PREFIX + "send";
+
+	String RECEIVE_COUNTER_NAME = METER_PREFIX + "receive";
 
 	@ManagedAttribute(description = "Use to disable debug logging during normal message flow")
 	void setLoggingEnabled(boolean enabled);
@@ -49,6 +56,15 @@ public interface IntegrationManagement {
 	 * @since 5.0
 	 */
 	ManagementOverrides getOverrides();
+
+	/**
+	 * Inject a {@link MetricsCaptor}
+	 * @param captor the captor.
+	 * @since 5.0.4
+	 */
+	default void registerMetricsCaptor(MetricsCaptor captor) {
+		// no op
+	}
 
 	/**
 	 * Toggles to inform the management configurer to not set these properties since

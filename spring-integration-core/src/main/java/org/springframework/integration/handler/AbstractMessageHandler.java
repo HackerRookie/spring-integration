@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,9 +30,12 @@ import org.springframework.integration.support.management.MessageHandlerMetrics;
 import org.springframework.integration.support.management.MetricsContext;
 import org.springframework.integration.support.management.Statistics;
 import org.springframework.integration.support.management.TrackableComponent;
+import org.springframework.integration.support.management.metrics.MetricsCaptor;
+import org.springframework.integration.support.management.metrics.SampleFacade;
+import org.springframework.integration.support.management.metrics.TimerFacade;
+import org.springframework.integration.support.utils.IntegrationUtils;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHandler;
-import org.springframework.messaging.MessageHandlingException;
 import org.springframework.messaging.MessagingException;
 import org.springframework.util.Assert;
 
@@ -47,11 +50,12 @@ import reactor.core.CoreSubscriber;
  * @author Mark Fisher
  * @author Oleg Zhurakousky
  * @author Gary Russell
+ * @author Artem Bilan
  */
 @IntegrationManagedResource
-public abstract class AbstractMessageHandler extends IntegrationObjectSupport implements MessageHandler,
-		MessageHandlerMetrics, ConfigurableMetricsAware<AbstractMessageHandlerMetrics>, TrackableComponent, Orderable,
-		CoreSubscriber<Message<?>> {
+public abstract class AbstractMessageHandler extends IntegrationObjectSupport
+		implements MessageHandler, MessageHandlerMetrics, ConfigurableMetricsAware<AbstractMessageHandlerMetrics>,
+		TrackableComponent, Orderable, CoreSubscriber<Message<?>> {
 
 	private final ManagementOverrides managementOverrides = new ManagementOverrides();
 
@@ -71,6 +75,10 @@ public abstract class AbstractMessageHandler extends IntegrationObjectSupport im
 
 	private volatile boolean loggingEnabled = true;
 
+	private MetricsCaptor metricsCaptor;
+
+	private TimerFacade successTimer;
+
 	@Override
 	public boolean isLoggingEnabled() {
 		return this.loggingEnabled;
@@ -80,6 +88,12 @@ public abstract class AbstractMessageHandler extends IntegrationObjectSupport im
 	public void setLoggingEnabled(boolean loggingEnabled) {
 		this.loggingEnabled = loggingEnabled;
 		this.managementOverrides.loggingConfigured = true;
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public void registerMetricsCaptor(MetricsCaptor metricsCaptor) {
+		this.metricsCaptor = metricsCaptor;
 	}
 
 	@Override
@@ -131,27 +145,53 @@ public abstract class AbstractMessageHandler extends IntegrationObjectSupport im
 		MetricsContext start = null;
 		boolean countsEnabled = this.countsEnabled;
 		AbstractMessageHandlerMetrics handlerMetrics = this.handlerMetrics;
+		SampleFacade sample = null;
+		if (countsEnabled && this.metricsCaptor != null) {
+			sample = this.metricsCaptor.start();
+		}
 		try {
 			if (this.shouldTrack) {
-				message = MessageHistory.write(message, this, this.getMessageBuilderFactory());
+				message = MessageHistory.write(message, this, getMessageBuilderFactory());
 			}
 			if (countsEnabled) {
 				start = handlerMetrics.beforeHandle();
-			}
-			this.handleMessageInternal(message);
-			if (countsEnabled) {
+				handleMessageInternal(message);
+				if (sample != null) {
+					sample.stop(sendTimer());
+				}
 				handlerMetrics.afterHandle(start, true);
+			}
+			else {
+				handleMessageInternal(message);
 			}
 		}
 		catch (Exception e) {
+			if (sample != null) {
+				sample.stop(buildSendTimer(false, e.getClass().getSimpleName()));
+			}
 			if (countsEnabled) {
 				handlerMetrics.afterHandle(start, false);
 			}
-			if (e instanceof MessagingException) {
-				throw (MessagingException) e;
-			}
-			throw new MessageHandlingException(message, "error occurred in message handler [" + this + "]", e);
+			throw IntegrationUtils.wrapInHandlingExceptionIfNecessary(message,
+					() -> "error occurred in message handler [" + this + "]", e);
 		}
+	}
+
+	private TimerFacade sendTimer() {
+		if (this.successTimer == null) {
+			this.successTimer = buildSendTimer(true, "none");
+		}
+		return this.successTimer;
+	}
+
+	private TimerFacade buildSendTimer(boolean success, String exception) {
+		return this.metricsCaptor.timerBuilder(SEND_TIMER_NAME)
+				.tag("type", "handler")
+				.tag("name", getComponentName() == null ? "unknown" : getComponentName())
+				.tag("result", success ? "success" : "failure")
+				.tag("exception", exception)
+				.description("Send processing time")
+				.build();
 	}
 
 	@Override

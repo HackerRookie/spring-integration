@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import org.reactivestreams.Publisher;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.channel.FluxMessageChannel;
 import org.springframework.integration.core.MessageSource;
-import org.springframework.integration.dsl.channel.MessageChannelSpec;
 import org.springframework.integration.dsl.support.FixedSubscriberChannelPrototype;
 import org.springframework.integration.dsl.support.MessageChannelReference;
 import org.springframework.integration.endpoint.MessageProducerSupport;
@@ -46,7 +45,7 @@ import org.springframework.util.Assert;
  *
  * @since 5.0
  *
- * @see org.springframework.integration.config.dsl.IntegrationFlowBeanPostProcessor
+ * @see org.springframework.integration.dsl.context.IntegrationFlowBeanPostProcessor
  */
 public final class IntegrationFlows {
 
@@ -90,7 +89,7 @@ public final class IntegrationFlows {
 	 * The {@link org.springframework.integration.dsl.IntegrationFlow} {@code inputChannel}.
 	 * @param messageChannelSpec the MessageChannelSpec to populate {@link MessageChannel} instance.
 	 * @return new {@link IntegrationFlowBuilder}.
-	 * @see org.springframework.integration.dsl.channel.MessageChannels
+	 * @see org.springframework.integration.dsl.MessageChannels
 	 */
 	public static IntegrationFlowBuilder from(MessageChannelSpec<?, ?> messageChannelSpec) {
 		Assert.notNull(messageChannelSpec, "'messageChannelSpec' must not be null");
@@ -302,28 +301,38 @@ public final class IntegrationFlows {
 	 * Populate the {@link MessageChannel} to the new {@link IntegrationFlowBuilder}
 	 * chain, which becomes as a {@code requestChannel} for the Messaging Gateway(s) built
 	 * on the provided service interface.
-	 * <p>A gateway proxy bean for provided service interface is registered under a name of
-	 * the {@link IntegrationFlow} bean plus {@code .gateway} suffix.
+	 * <p>A gateway proxy bean for provided service interface is registered under a name
+	 * from the
+	 * {@link org.springframework.integration.annotation.MessagingGateway#name()} if present
+	 * or from the {@link IntegrationFlow} bean name plus {@code .gateway} suffix.
 	 * @param serviceInterface the service interface class with an optional
 	 * {@link org.springframework.integration.annotation.MessagingGateway} annotation.
 	 * @return new {@link IntegrationFlowBuilder}.
 	 */
 	public static IntegrationFlowBuilder from(Class<?> serviceInterface) {
+		return from(serviceInterface, null);
+	}
+
+	/**
+	 * Populate the {@link MessageChannel} to the new {@link IntegrationFlowBuilder}
+	 * chain, which becomes as a {@code requestChannel} for the Messaging Gateway(s) built
+	 * on the provided service interface.
+	 * <p>A gateway proxy bean for provided service interface is registered under a name of
+	 * the provided {@code beanName} if not null, or from the
+	 * {@link org.springframework.integration.annotation.MessagingGateway#name()} if present
+	 * or as a fallback to the {@link IntegrationFlow} bean name plus {@code .gateway} suffix.
+	 * @param serviceInterface the service interface class with an optional
+	 * {@link org.springframework.integration.annotation.MessagingGateway} annotation.
+	 * @param beanName the bean name to be used for registering bean for the gateway proxy
+	 * @return new {@link IntegrationFlowBuilder}.
+	 */
+	public static IntegrationFlowBuilder from(Class<?> serviceInterface, String beanName) {
 		final DirectChannel gatewayRequestChannel = new DirectChannel();
 
-		GatewayProxyFactoryBean gatewayProxyFactoryBean =
-				new AnnotationGatewayProxyFactoryBean(serviceInterface) {
+		GatewayProxyFactoryBean gatewayProxyFactoryBean = new AnnotationGatewayProxyFactoryBean(serviceInterface);
 
-					@Override
-					protected void onInit() {
-						super.onInit();
-						getGateways()
-								.values()
-								.forEach(gateway ->
-										gateway.setRequestChannel(gatewayRequestChannel));
-					}
-
-				};
+		gatewayProxyFactoryBean.setDefaultRequestChannel(gatewayRequestChannel);
+		gatewayProxyFactoryBean.setBeanName(beanName);
 
 		return from(gatewayRequestChannel)
 				.addComponent(gatewayProxyFactoryBean);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,8 +35,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,7 +52,10 @@ import org.springframework.context.support.AbstractApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 import org.springframework.core.serializer.DefaultDeserializer;
 import org.springframework.core.serializer.DefaultSerializer;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.integration.channel.QueueChannel;
+import org.springframework.integration.config.ConsumerEndpointFactoryBean;
 import org.springframework.integration.ip.tcp.connection.AbstractClientConnectionFactory;
 import org.springframework.integration.ip.tcp.connection.AbstractConnectionFactory;
 import org.springframework.integration.ip.tcp.connection.AbstractServerConnectionFactory;
@@ -78,12 +79,14 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 /**
  * @author Gary Russell
  * @author Artem Bilan
+ *
  * @since 2.0
  */
 public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTests {
 
 	private static final Log logger = LogFactory.getLog(TcpSendingMessageHandlerTests.class);
 
+	private AsyncTaskExecutor executor = new SimpleAsyncTaskExecutor();
 
 	private void readFully(InputStream is, byte[] buff) throws IOException {
 		for (int i = 0; i < buff.length; i++) {
@@ -96,7 +99,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -149,7 +152,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -206,6 +209,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		handler.start();
 		handler.stop();
 		adapter.stop();
+		ccf.stop();
 		serverSocket.get().close();
 	}
 
@@ -214,7 +218,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -270,7 +274,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -323,7 +327,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -376,10 +380,10 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 
 	@Test
 	public void testNetLength() throws Exception {
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -435,7 +439,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -494,7 +498,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -543,10 +547,10 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 
 	@Test
 	public void testNioSerial() throws Exception {
-		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
+		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -597,12 +601,12 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 	}
 
 	@Test
-	public void testNetSingleUseNoInbound() throws Exception  {
+	public void testNetSingleUseNoInbound() throws Exception {
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final Semaphore semaphore = new Semaphore(0);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -644,12 +648,12 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 	}
 
 	@Test
-	public void testNioSingleUseNoInbound() throws Exception  {
+	public void testNioSingleUseNoInbound() throws Exception {
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final Semaphore semaphore = new Semaphore(0);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -691,12 +695,12 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 	}
 
 	@Test
-	public void testNetSingleUseWithInbound() throws Exception  {
+	public void testNetSingleUseWithInbound() throws Exception {
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final Semaphore semaphore = new Semaphore(0);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -751,12 +755,12 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 	}
 
 	@Test
-	public void testNioSingleUseWithInbound() throws Exception  {
+	public void testNioSingleUseWithInbound() throws Exception {
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final Semaphore semaphore = new Semaphore(0);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -811,14 +815,13 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 	}
 
 	@Test
-	public void testNioSingleUseWithInboundMany() throws Exception  {
+	public void testNioSingleUseWithInboundMany() throws Exception {
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final Semaphore semaphore = new Semaphore(0);
 		final AtomicBoolean done = new AtomicBoolean();
 		final List<Socket> serverSockets = new ArrayList<Socket>();
-		final ExecutorService exec = Executors.newCachedThreadPool();
-		exec.execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0, 100);
 				serverSocket.set(server);
@@ -827,7 +830,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 					final Socket socket = server.accept();
 					serverSockets.add(socket);
 					final int j = i;
-					exec.execute(() -> {
+					this.executor.execute(() -> {
 						semaphore.release();
 						byte[] b = new byte[9];
 						try {
@@ -842,7 +845,8 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 							try {
 								socket.close();
 							}
-							catch (IOException e2) { }
+							catch (IOException e2) {
+							}
 						}
 					});
 				}
@@ -863,7 +867,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		ccf.setDeserializer(serializer);
 		ccf.setSoTimeout(10000);
 		ccf.setSingleUse(true);
-		ccf.setTaskExecutor(Executors.newCachedThreadPool());
+		ccf.setTaskExecutor(this.executor);
 		ccf.start();
 		TcpSendingMessageHandler handler = new TcpSendingMessageHandler();
 		handler.setConnectionFactory(ccf);
@@ -901,7 +905,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -972,7 +976,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -1009,7 +1013,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		ccf.setDeserializer(new DefaultDeserializer());
 		ccf.setSoTimeout(10000);
 		TcpConnectionInterceptorFactoryChain fc = new TcpConnectionInterceptorFactoryChain();
-		fc.setInterceptors(new TcpConnectionInterceptorFactory[] {newInterceptorFactory()});
+		fc.setInterceptors(new TcpConnectionInterceptorFactory[] { newInterceptorFactory() });
 		ccf.setInterceptorFactoryChain(fc);
 		ccf.start();
 		TcpSendingMessageHandler handler = new TcpSendingMessageHandler();
@@ -1041,7 +1045,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
 				serverSocket.set(server);
@@ -1098,7 +1102,7 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 		final AtomicReference<ServerSocket> serverSocket = new AtomicReference<ServerSocket>();
 		final CountDownLatch latch = new CountDownLatch(1);
 		final AtomicBoolean done = new AtomicBoolean();
-		Executors.newSingleThreadExecutor().execute(() -> {
+		this.executor.execute(() -> {
 			int i = 0;
 			try {
 				ServerSocket server = ServerSocketFactory.getDefault().createServerSocket(0);
@@ -1156,7 +1160,10 @@ public class TcpSendingMessageHandlerTests extends AbstractTcpChannelAdapterTest
 				"TcpOutboundChannelAdapterWithinChainTests-context.xml", this.getClass());
 		AbstractServerConnectionFactory scf = ctx.getBean(AbstractServerConnectionFactory.class);
 		TestingUtilities.waitListening(scf, null);
-		MessageChannel channelAdapterWithinChain = ctx.getBean("tcpOutboundChannelAdapterWithinChain", MessageChannel.class);
+		ctx.getBean(AbstractClientConnectionFactory.class).setPort(scf.getPort());
+		ctx.getBeansOfType(ConsumerEndpointFactoryBean.class).values().forEach(c -> c.start());
+		MessageChannel channelAdapterWithinChain = ctx.getBean("tcpOutboundChannelAdapterWithinChain",
+				MessageChannel.class);
 		PollableChannel inbound = ctx.getBean("inbound", PollableChannel.class);
 		String testPayload = "Hello, world!";
 		channelAdapterWithinChain.send(new GenericMessage<String>(testPayload));

@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import org.w3c.dom.NodeList;
 import org.springframework.beans.BeanMetadataElement;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinitionHolder;
-import org.springframework.beans.factory.config.BeanReference;
 import org.springframework.beans.factory.config.ConstructorArgumentValues;
 import org.springframework.beans.factory.config.ConstructorArgumentValues.ValueHolder;
 import org.springframework.beans.factory.config.RuntimeBeanReference;
@@ -98,6 +97,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void setValueIfAttributeDefined(BeanDefinitionBuilder builder, Element element, String attributeName,
 			String propertyName) {
+
 		setValueIfAttributeDefined(builder, element, attributeName, propertyName, false);
 	}
 
@@ -115,7 +115,9 @@ public abstract class IntegrationNamespaceUtils {
 	 * @param element - the XML element where the attribute should be defined
 	 * @param attributeName - the name of the attribute whose value will be set on the property
 	 */
-	public static void setValueIfAttributeDefined(BeanDefinitionBuilder builder, Element element, String attributeName) {
+	public static void setValueIfAttributeDefined(BeanDefinitionBuilder builder, Element element,
+			String attributeName) {
+
 		setValueIfAttributeDefined(builder, element, attributeName, false);
 	}
 
@@ -132,6 +134,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void setValueIfAttributeDefined(BeanDefinitionBuilder builder, Element element, String attributeName,
 			String propertyName, boolean emptyStringAllowed) {
+
 		String attributeValue = element.getAttribute(attributeName);
 		if (StringUtils.hasText(attributeValue) || (emptyStringAllowed && element.hasAttribute(attributeName))) {
 			builder.addPropertyValue(propertyName, new TypedStringValue(attributeValue));
@@ -157,6 +160,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void setValueIfAttributeDefined(BeanDefinitionBuilder builder, Element element, String attributeName,
 			boolean emptyStringAllowed) {
+
 		setValueIfAttributeDefined(builder, element, attributeName,
 				Conventions.attributeNameToPropertyName(attributeName), emptyStringAllowed);
 	}
@@ -174,11 +178,13 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void setReferenceIfAttributeDefined(BeanDefinitionBuilder builder, Element element,
 			String attributeName, String propertyName) {
+
 		setReferenceIfAttributeDefined(builder, element, attributeName, propertyName, false);
 	}
 
 	public static void setReferenceIfAttributeDefined(BeanDefinitionBuilder builder, Element element,
 			String attributeName, String propertyName, boolean emptyStringAllowed) {
+
 		if (element.hasAttribute(attributeName)) {
 			String attributeValue = element.getAttribute(attributeName);
 			if (StringUtils.hasText(attributeValue)) {
@@ -210,11 +216,13 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void setReferenceIfAttributeDefined(BeanDefinitionBuilder builder, Element element,
 			String attributeName) {
+
 		setReferenceIfAttributeDefined(builder, element, attributeName, false);
 	}
 
 	public static void setReferenceIfAttributeDefined(BeanDefinitionBuilder builder, Element element,
 			String attributeName, boolean emptyStringAllowed) {
+
 		setReferenceIfAttributeDefined(builder, element, attributeName,
 				Conventions.attributeNameToPropertyName(attributeName), emptyStringAllowed);
 	}
@@ -246,6 +254,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void configurePollerMetadata(Element pollerElement, BeanDefinitionBuilder targetBuilder,
 			ParserContext parserContext) {
+
 		if (pollerElement.hasAttribute("ref")) {
 			int numberOfAttributes = pollerElement.getAttributes().getLength();
 			if (numberOfAttributes != 1) {
@@ -287,6 +296,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static String getTextFromAttributeOrNestedElement(Element element, String name,
 			ParserContext parserContext) {
+
 		String attr = element.getAttribute(name);
 		Element childElement = DomUtils.getChildElementByTagName(element, name);
 		if (StringUtils.hasText(attr) && childElement != null) {
@@ -335,6 +345,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void configureHeaderMapper(Element element, BeanDefinitionBuilder rootBuilder,
 			ParserContext parserContext, Class<?> headerMapperClass, String replyHeaderValue) {
+
 		configureHeaderMapper(element, rootBuilder, parserContext,
 				BeanDefinitionBuilder.genericBeanDefinition(headerMapperClass), replyHeaderValue);
 	}
@@ -350,6 +361,7 @@ public abstract class IntegrationNamespaceUtils {
 	 */
 	public static void configureHeaderMapper(Element element, BeanDefinitionBuilder rootBuilder,
 			ParserContext parserContext, BeanDefinitionBuilder headerMapperBuilder, String replyHeaderValue) {
+
 		String defaultMappedReplyHeadersAttributeName = "mapped-reply-headers";
 		if (!StringUtils.hasText(replyHeaderValue)) {
 			replyHeaderValue = defaultMappedReplyHeadersAttributeName;
@@ -369,7 +381,8 @@ public abstract class IntegrationNamespaceUtils {
 		if (hasMappedRequestHeaders || hasMappedReplyHeaders) {
 
 			if (hasMappedRequestHeaders) {
-				headerMapperBuilder.addPropertyValue("requestHeaderNames", element.getAttribute("mapped-request-headers"));
+				headerMapperBuilder.addPropertyValue("requestHeaderNames",
+						element.getAttribute("mapped-request-headers"));
 			}
 			if (hasMappedReplyHeaders) {
 				headerMapperBuilder.addPropertyValue("replyHeaderNames", element.getAttribute(replyHeaderValue));
@@ -424,8 +437,10 @@ public abstract class IntegrationNamespaceUtils {
 	 * @return The bean definition.
 	 */
 	public static BeanDefinition configureTransactionDefinition(Element txElement) {
-		BeanDefinitionBuilder txDefinitionBuilder = BeanDefinitionBuilder.genericBeanDefinition(DefaultTransactionAttribute.class);
-		txDefinitionBuilder.addPropertyValue("propagationBehaviorName", "PROPAGATION_" + txElement.getAttribute("propagation"));
+		BeanDefinitionBuilder txDefinitionBuilder =
+				BeanDefinitionBuilder.genericBeanDefinition(DefaultTransactionAttribute.class);
+		txDefinitionBuilder.addPropertyValue("propagationBehaviorName", "PROPAGATION_"
+				+ txElement.getAttribute("propagation"));
 		txDefinitionBuilder.addPropertyValue("isolationLevelName", "ISOLATION_" + txElement.getAttribute("isolation"));
 		txDefinitionBuilder.addPropertyValue("timeout", txElement.getAttribute("timeout"));
 		txDefinitionBuilder.addPropertyValue("readOnly", txElement.getAttribute("read-only"));
@@ -443,18 +458,21 @@ public abstract class IntegrationNamespaceUtils {
 
 	public static void configureAndSetAdviceChainIfPresent(Element adviceChainElement, Element txElement,
 			BeanDefinition parentBeanDefinition, ParserContext parserContext) {
+
 		configureAndSetAdviceChainIfPresent(adviceChainElement, txElement, false, parentBeanDefinition, parserContext);
 	}
 
 	public static void configureAndSetAdviceChainIfPresent(Element adviceChainElement,
 			Element txElement, boolean handleMessageAdvice, BeanDefinition parentBeanDefinition,
 			ParserContext parserContext) {
+
 		configureAndSetAdviceChainIfPresent(adviceChainElement, txElement, handleMessageAdvice,
 				parentBeanDefinition, parserContext, "adviceChain");
 	}
 
 	public static void configureAndSetAdviceChainIfPresent(Element adviceChainElement, Element txElement,
 			BeanDefinition parentBeanDefinition, ParserContext parserContext, String propertyName) {
+
 		configureAndSetAdviceChainIfPresent(adviceChainElement, txElement, false, parentBeanDefinition,
 				parserContext, propertyName);
 	}
@@ -463,6 +481,7 @@ public abstract class IntegrationNamespaceUtils {
 	public static void configureAndSetAdviceChainIfPresent(Element adviceChainElement, Element txElement,
 			boolean handleMessageAdvice, BeanDefinition parentBeanDefinition, ParserContext parserContext,
 			String propertyName) {
+
 		ManagedList adviceChain = configureAdviceChain(adviceChainElement, txElement, handleMessageAdvice,
 				parentBeanDefinition, parserContext);
 		if (!CollectionUtils.isEmpty(adviceChain)) {
@@ -473,12 +492,14 @@ public abstract class IntegrationNamespaceUtils {
 	@SuppressWarnings("rawtypes")
 	public static ManagedList configureAdviceChain(Element adviceChainElement, Element txElement,
 			BeanDefinition parentBeanDefinition, ParserContext parserContext) {
+
 		return configureAdviceChain(adviceChainElement, txElement, false, parentBeanDefinition, parserContext);
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
 	public static ManagedList configureAdviceChain(Element adviceChainElement, Element txElement,
 			boolean handleMessageAdvice, BeanDefinition parentBeanDefinition, ParserContext parserContext) {
+
 		ManagedList adviceChain = new ManagedList();
 		if (txElement != null) {
 			adviceChain.add(configureTransactionAttributes(txElement, handleMessageAdvice));
@@ -554,7 +575,8 @@ public abstract class IntegrationNamespaceUtils {
 		String expressionElementValue = element.getAttribute(expressionElementName);
 
 		if (StringUtils.hasText(expressionElementValue)) {
-			BeanDefinitionBuilder expressionDefBuilder = BeanDefinitionBuilder.genericBeanDefinition(ExpressionFactoryBean.class);
+			BeanDefinitionBuilder expressionDefBuilder =
+					BeanDefinitionBuilder.genericBeanDefinition(ExpressionFactoryBean.class);
 			expressionDefBuilder.addConstructorArgValue(expressionElementValue);
 			return expressionDefBuilder.getRawBeanDefinition();
 		}
@@ -576,6 +598,7 @@ public abstract class IntegrationNamespaceUtils {
 	@SuppressWarnings("unchecked")
 	public static void checkAndConfigureFixedSubscriberChannel(Element element, ParserContext parserContext,
 			String channelName, String handlerBeanName) {
+
 		BeanDefinitionRegistry registry = parserContext.getRegistry();
 		if (registry.containsBeanDefinition(channelName)) {
 			BeanDefinition inputChannelDefinition = registry.getBeanDefinition(channelName);
@@ -593,17 +616,21 @@ public abstract class IntegrationNamespaceUtils {
 		}
 		else {
 			BeanDefinition bfppd;
-			if (!registry.containsBeanDefinition(IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME)) {
+			if (!registry.containsBeanDefinition(
+					IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME)) {
+
 				bfppd = new RootBeanDefinition(FixedSubscriberChannelBeanFactoryPostProcessor.class);
-				registry.registerBeanDefinition(IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME, bfppd);
+				registry.registerBeanDefinition(
+						IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME, bfppd);
 			}
 			else {
-				bfppd = registry.getBeanDefinition(IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME);
+				bfppd = registry.getBeanDefinition(
+						IntegrationContextUtils.INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME);
 			}
 			ManagedMap<String, String> candidates;
 			ValueHolder argumentValue = bfppd.getConstructorArgumentValues().getArgumentValue(0, Map.class);
 			if (argumentValue == null) {
-				candidates = new ManagedMap<String, String>();
+				candidates = new ManagedMap<>();
 				bfppd.getConstructorArgumentValues().addIndexedArgumentValue(0, candidates);
 			}
 			else {
@@ -613,40 +640,34 @@ public abstract class IntegrationNamespaceUtils {
 		}
 	}
 
-	public static void putLifecycleInRole(String role, String beanName, ParserContext parserContext) {
-		BeanDefinitionRegistry registry = parserContext.getRegistry();
-		IntegrationConfigUtils.registerRoleControllerDefinitionIfNecessary(registry);
-		BeanDefinition controllerDef = registry.getBeanDefinition(
-				IntegrationContextUtils.INTEGRATION_LIFECYCLE_ROLE_CONTROLLER);
-		@SuppressWarnings("unchecked")
-		ManagedList<String> roles = (ManagedList<String>) controllerDef.getConstructorArgumentValues()
-				.getArgumentValue(0, ManagedList.class).getValue();
-		@SuppressWarnings("unchecked")
-		ManagedList<BeanReference> lifecycles = (ManagedList<BeanReference>) controllerDef.getConstructorArgumentValues()
-				.getArgumentValue(1, ManagedList.class).getValue();
-		roles.add(role);
-		lifecycles.add(new RuntimeBeanReference(beanName));
-	}
-
 	public static void injectPropertyWithAdapter(String beanRefAttribute, String methodRefAttribute,
 			String expressionAttribute, String beanProperty, String adapterClass, Element element,
 			BeanDefinitionBuilder builder, BeanMetadataElement processor, ParserContext parserContext) {
+
 		BeanMetadataElement adapter = constructAdapter(beanRefAttribute, methodRefAttribute, expressionAttribute,
 				adapterClass, element, processor, parserContext);
-		builder.addPropertyValue(beanProperty, adapter);
+
+		if (adapter != null) {
+			builder.addPropertyValue(beanProperty, adapter);
+		}
 	}
 
 	public static void injectConstructorWithAdapter(String beanRefAttribute, String methodRefAttribute,
 			String expressionAttribute, String adapterClass, Element element,
 			BeanDefinitionBuilder builder, BeanMetadataElement processor, ParserContext parserContext) {
+
 		BeanMetadataElement adapter = constructAdapter(beanRefAttribute, methodRefAttribute, expressionAttribute,
 				adapterClass, element, processor, parserContext);
-		builder.addConstructorArgValue(adapter);
+
+		if (adapter != null) {
+			builder.addConstructorArgValue(adapter);
+		}
 	}
 
 	private static BeanMetadataElement constructAdapter(String beanRefAttribute, String methodRefAttribute,
 			String expressionAttribute, String adapterClass, Element element, BeanMetadataElement processor,
 			ParserContext parserContext) {
+
 		final String beanRef = element.getAttribute(beanRefAttribute);
 		final String beanMethod = element.getAttribute(methodRefAttribute);
 		final String expression = element.getAttribute(expressionAttribute);
@@ -673,14 +694,13 @@ public abstract class IntegrationNamespaceUtils {
 		else if (processor != null) {
 			adapter = createAdapter(processor, beanMethod, adapterClass);
 		}
-		else {
-			adapter = createAdapter(null, beanMethod, adapterClass);
-		}
+
 		return adapter;
 	}
 
 	private static BeanMetadataElement createAdapter(BeanMetadataElement ref, String method,
 			String unqualifiedClassName) {
+
 		BeanDefinitionBuilder builder = BeanDefinitionBuilder
 				.genericBeanDefinition(IntegrationConfigUtils.BASE_PACKAGE + ".config." + unqualifiedClassName
 						+ "FactoryBean");

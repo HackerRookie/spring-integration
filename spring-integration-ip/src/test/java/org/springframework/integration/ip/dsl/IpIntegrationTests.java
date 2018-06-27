@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,28 +21,37 @@ import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.aopalliance.intercept.MethodInterceptor;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.integration.channel.QueueChannel;
 import org.springframework.integration.config.EnableIntegration;
+import org.springframework.integration.core.MessagingTemplate;
 import org.springframework.integration.dsl.IntegrationFlow;
 import org.springframework.integration.dsl.IntegrationFlows;
 import org.springframework.integration.dsl.Transformers;
 import org.springframework.integration.dsl.context.IntegrationFlowContext;
-import org.springframework.integration.dsl.context.IntegrationFlowRegistration;
+import org.springframework.integration.ip.tcp.TcpOutboundGateway;
 import org.springframework.integration.ip.tcp.TcpReceivingChannelAdapter;
 import org.springframework.integration.ip.tcp.TcpSendingMessageHandler;
 import org.springframework.integration.ip.tcp.connection.AbstractClientConnectionFactory;
 import org.springframework.integration.ip.tcp.connection.AbstractServerConnectionFactory;
 import org.springframework.integration.ip.tcp.serializer.TcpCodecs;
 import org.springframework.integration.ip.udp.MulticastSendingMessageHandler;
+import org.springframework.integration.ip.udp.UdpServerListeningEvent;
 import org.springframework.integration.ip.udp.UnicastReceivingChannelAdapter;
 import org.springframework.integration.ip.util.TestingUtilities;
 import org.springframework.integration.support.MessageBuilder;
@@ -54,6 +63,8 @@ import org.springframework.test.context.junit4.SpringRunner;
 
 /**
  * @author Gary Russell
+ * @author Artem Bilan
+ *
  * @since 5.0
  *
  */
@@ -65,6 +76,9 @@ public class IpIntegrationTests {
 	private AbstractServerConnectionFactory server1;
 
 	@Autowired
+	private AbstractClientConnectionFactory client1;
+
+	@Autowired
 	private IntegrationFlowContext flowContext;
 
 	@Autowired
@@ -72,13 +86,23 @@ public class IpIntegrationTests {
 	private MessageChannel udpOut;
 
 	@Autowired
+	@Qualifier("clientTcpFlow.input")
+	private MessageChannel clientTcpFlowInput;
+
+	@Autowired
 	private UnicastReceivingChannelAdapter udpInbound;
 
 	@Autowired
 	private QueueChannel udpIn;
 
+	@Autowired
+	private Config config;
+
+	@Autowired
+	private AtomicBoolean adviceCalled;
+
 	@Test
-	public void testTcpAdapters() throws Exception {
+	public void testTcpAdapters() {
 		ApplicationEventPublisher publisher = e -> { };
 		AbstractServerConnectionFactory server = Tcp.netServer(0).backlog(2).soTimeout(5000).id("server").get();
 		assertEquals("server", server.getComponentName());
@@ -107,20 +131,21 @@ public class IpIntegrationTests {
 	@Test
 	public void testTcpGateways() {
 		TestingUtilities.waitListening(this.server1, null);
-		IntegrationFlow flow = f -> f
-				.handle(Tcp.outboundGateway(Tcp.netClient("localhost", this.server1.getPort())
-						.serializer(TcpCodecs.crlf())
-						.deserializer(TcpCodecs.lengthHeader1())
-						.id("client1"))
-					.remoteTimeout(m -> 5000))
-				.transform(Transformers.objectToString());
-		IntegrationFlowRegistration theFlow = this.flowContext.registration(flow).register();
-		assertThat(theFlow.getMessagingTemplate().convertSendAndReceive("foo", String.class), equalTo("FOO"));
+		this.client1.stop();
+		this.client1.setPort(this.server1.getPort());
+		this.client1.start();
+
+		MessagingTemplate messagingTemplate = new MessagingTemplate(this.clientTcpFlowInput);
+
+		assertThat(messagingTemplate.convertSendAndReceive("foo", String.class), equalTo("FOO"));
+
+		assertTrue(this.adviceCalled.get());
 	}
 
 	@Test
-	public void testUdp() {
-		TestingUtilities.waitListening(this.udpInbound, null);
+	public void testUdp() throws Exception {
+		assertTrue(this.config.listeningLatch.await(10, TimeUnit.SECONDS));
+		assertEquals(this.udpInbound.getPort(), this.config.serverPort);
 		Message<String> outMessage = MessageBuilder.withPayload("foo")
 				.setHeader("udp_dest", "udp://localhost:" + this.udpInbound.getPort())
 				.build();
@@ -147,6 +172,10 @@ public class IpIntegrationTests {
 	@Configuration
 	@EnableIntegration
 	public static class Config {
+
+		private final CountDownLatch listeningLatch = new CountDownLatch(1);
+
+		private volatile int serverPort;
 
 		@Bean
 		public AbstractServerConnectionFactory server1() {
@@ -179,6 +208,49 @@ public class IpIntegrationTests {
 		@Bean
 		public IntegrationFlow outUdpAdapter() {
 			return f -> f.handle(Udp.outboundAdapter(m -> m.getHeaders().get("udp_dest")));
+		}
+
+		@Bean
+		public ApplicationListener<UdpServerListeningEvent> events() {
+			return (ApplicationListener<UdpServerListeningEvent>) event -> {
+				this.serverPort = event.getPort();
+				this.listeningLatch.countDown();
+			};
+		}
+
+		@Bean
+		public AbstractClientConnectionFactory client1() {
+			return Tcp.netClient("localhost", server1().getPort())
+					.serializer(TcpCodecs.crlf())
+					.deserializer(TcpCodecs.lengthHeader1())
+					.get();
+		}
+
+		@Bean
+		public TcpOutboundGateway tcpOut() {
+			return Tcp.outboundGateway(client1())
+					.remoteTimeout(m -> 5000)
+					.get();
+		}
+
+		@Bean
+		public AtomicBoolean adviceCalled() {
+			return new AtomicBoolean();
+		}
+
+		@Bean
+		public MethodInterceptor testAdvice() {
+			return invocation -> {
+				adviceCalled().set(true);
+				return invocation.proceed();
+			};
+		}
+
+		@Bean
+		public IntegrationFlow clientTcpFlow() {
+			return f -> f
+					.handle(tcpOut(), e -> e.advice(testAdvice()))
+					.transform(Transformers.objectToString());
 		}
 
 	}

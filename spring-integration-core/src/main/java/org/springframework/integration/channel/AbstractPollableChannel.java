@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import java.util.Deque;
 import java.util.List;
 
 import org.springframework.integration.support.management.PollableChannelManagement;
+import org.springframework.integration.support.management.metrics.CounterFacade;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.PollableChannel;
 import org.springframework.messaging.support.ChannelInterceptor;
@@ -39,6 +40,8 @@ public abstract class AbstractPollableChannel extends AbstractMessageChannel
 		implements PollableChannel, PollableChannelManagement, ExecutorChannelInterceptorAware {
 
 	private volatile int executorInterceptorsSize;
+
+	private CounterFacade receiveCounter;
 
 	@Override
 	public int getReceiveCount() {
@@ -96,14 +99,17 @@ public abstract class AbstractPollableChannel extends AbstractMessageChannel
 				logger.trace("preReceive on channel '" + this + "'");
 			}
 			if (interceptorList.getSize() > 0) {
-				interceptorStack = new ArrayDeque<ChannelInterceptor>();
+				interceptorStack = new ArrayDeque<>();
 
 				if (!interceptorList.preReceive(this, interceptorStack)) {
 					return null;
 				}
 			}
 			Message<?> message = this.doReceive(timeout);
-			if (countsEnabled) {
+			if (countsEnabled && message != null) {
+				if (getMetricsCaptor() != null) {
+					incrementReceiveCounter();
+				}
 				getMetrics().afterReceive();
 				counted = true;
 			}
@@ -121,6 +127,16 @@ public abstract class AbstractPollableChannel extends AbstractMessageChannel
 		}
 		catch (RuntimeException e) {
 			if (countsEnabled && !counted) {
+				if (getMetricsCaptor() != null) {
+					getMetricsCaptor().counterBuilder(RECEIVE_COUNTER_NAME)
+							.tag("name", getComponentName() == null ? "unknown" : getComponentName())
+							.tag("type", "channel")
+							.tag("result", "failure")
+							.tag("exception", e.getClass().getSimpleName())
+							.description("Messages received")
+							.build()
+							.increment();
+				}
 				getMetrics().afterError();
 			}
 			if (!CollectionUtils.isEmpty(interceptorStack)) {
@@ -128,6 +144,19 @@ public abstract class AbstractPollableChannel extends AbstractMessageChannel
 			}
 			throw e;
 		}
+	}
+
+	private void incrementReceiveCounter() {
+		if (this.receiveCounter == null) {
+			this.receiveCounter = getMetricsCaptor().counterBuilder(RECEIVE_COUNTER_NAME)
+					.tag("name", getComponentName())
+					.tag("type", "channel")
+					.tag("result", "success")
+					.tag("exception", "none")
+					.description("Messages received")
+					.build();
+		}
+		this.receiveCounter.increment();
 	}
 
 	@Override

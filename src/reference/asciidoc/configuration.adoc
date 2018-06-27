@@ -223,6 +223,7 @@ spring.integration.taskScheduler.poolSize=10 <4>
 spring.integration.messagingTemplate.throwExceptionOnLateReply=false <5>
 spring.integration.readOnly.headers= <6>
 spring.integration.endpoints.noAutoStartup= <7>
+spring.integration.postProcessDynamicBeans=false <8>
 ----
 
 <1> When true, `input-channel` s will be automatically declared as `DirectChannel` s when not explicitly found in the
@@ -245,10 +246,15 @@ expecting a reply - because the sending thread has timed out, or already receive
 The list is used by the `DefaultMessageBuilderFactory` bean and propagated to the `IntegrationMessageHeaderAccessor` instances (see <<message-header-accessor>>), used to build messages via `MessageBuilder` (see <<message-builder>>).
 By default only `MessageHeaders.ID` and `MessageHeaders.TIMESTAMP` are not copied during message building.
 _Since version 4.3.2_
+
 <7> A comma-separated list of `AbstractEndpoint` bean names patterns (`xxx*`, `*xxx`, `*xxx*` or `xxx*yyy`) which should not be started automatically during application startup.
 These endpoints can be started later manually by their bean name via `Control Bus` (see <<control-bus>>), by their role using the `SmartLifecycleRoleController` (see <<endpoint-roles>>) or via simple `Lifecycle` bean injection.
 The effect of this global property can be explicitly overridden by specifying `auto-startup` XML or `autoStartup` annotation attribute, or via call to the `AbstractEndpoint.setAutoStartup()` in bean definition.
 _Since version 4.3.12_
+
+<8> A boolean flag to indicate that `BeanPostProcessor` s should post-process beans registered at runtime, e.g. message channels created via `IntegrationFlowContext` can be supplied with global channel interceptors.
+_Since version 4.3.15_
+
 
 These properties can be overridden by adding a file `/META-INF/spring.integration.properties` to the classpath.
 It is not necessary to provide all the properties, just those that you want to override.
@@ -438,7 +444,7 @@ With this endpoint using the default poller:
 public class AnnotationService {
 
     @Transformer(inputChannel = "aPollableChannel", outputChannel = "output"
-                           poller = @Poller("myPoller")
+                           poller = @Poller("myPoller"))
     public String handle(String payload) {
          ...
     }
@@ -574,7 +580,7 @@ public class MyFlowConfiguration {
 }
 ----
 
-Starting with _version 5.0_, support is also provided for `@Bean` annotated `InboundChannelAdapter`s that return `java.util.function.Supplier` which can produce either a POJO or a `Message`:
+Starting with _version 5.0_, a support is also provided for a `@Bean` annotated with the `InboundChannelAdapter` that return `java.util.function.Supplier` which can produce either a POJO or a `Message`:
 [source,java]
 ----
 @Configuration
@@ -586,21 +592,19 @@ public class MyFlowConfiguration {
     public Supplier<String> pojoSupplier() {
         return () -> "foo";
     }
-	
+
     @Bean
     @InboundChannelAdapter(value = "inputChannel", poller = @Poller(fixedDelay = "1000"))
     public Supplier<Message<String>> messageSupplier() {
         return () -> new GenericMessage<>("foo");
     }
+}
 ----
 
 The meta-annotation rules work on `@Bean` methods as well (`@MyServiceActivator` above can be applied to a `@Bean` definition).
 
-NOTE: When using these annotations on consumer `@Bean` definitions, if the bean definition returns an appropriate
-`MessageHandler` (depending on the annotation type), attributes such as `outputChannel`, `requiresReply` etc,
-must be set on the `MessageHandler` `@Bean` definition itself.
-The only annotation attributes used are `adviceChain`, `autoStartup`, `inputChannel`, `phase`, `poller`,
-all other attributes are for the handler.
+NOTE: When using these annotations on consumer `@Bean` definitions, if the bean definition returns an appropriate `MessageHandler` (depending on the annotation type), attributes such as `outputChannel`, `requiresReply`, `order` etc, must be set on the `MessageHandler` `@Bean` definition itself.
+The only annotation attributes used are `adviceChain`, `autoStartup`, `inputChannel`, `phase`, `poller`, all other attributes are for the handler.
 
 NOTE: The bean names are generated with this algorithm:
 * The `MessageHandler` (`MessageSource`) `@Bean` gets its own standard name from the method name or `name` attribute on
@@ -610,11 +614,13 @@ This works like there is no Messaging Annotation on the `@Bean` method.
 `[configurationComponentName].[methodName].[decapitalizedAnnotationClassShortName]`.
 For example the endpoint (`SourcePollingChannelAdapter`) for the `consoleSource()` definition above gets a bean name like:
 `myFlowConfiguration.consoleSource.inboundChannelAdapter`.
+Also see <<endpoint-bean-names>>.
 
 IMPORTANT: When using these annotations on `@Bean` definitions, the `inputChannel` must reference a declared bean; channels are not automatically declared in this case.
 
 NOTE: With Java & Annotation configuration we can use any `@Conditional` (e.g. `@Profile`) definition on the `@Bean`
 method level, meaning to skip the bean registration by some condition reason:
+
 [source,java]
 ----
 @Bean

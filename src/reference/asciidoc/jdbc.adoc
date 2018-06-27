@@ -81,6 +81,31 @@ The `value` in each parameter expression can be any valid SpEL expression.
 The `#root` object for the expression evaluation is the constructor argument defined on the `parameterSource` bean.
 It is static for all evaluations (in this case, an empty String).
 
+Starting with _version 5.0_, the `ExpressionEvaluatingSqlParameterSourceFactory` can be supplied with the `sqlParameterTypes` to specify the target SQL type for the particular parameter.
+
+Below example provides sql type for the parameters being used in the query.
+
+[source,xml]
+----
+<int-jdbc:inbound-channel-adapter query="select * from item where status=:status"
+    channel="target" data-source="dataSource"
+    select-sql-parameter-source="parameterSource" />
+
+<bean id="parameterSource" factory-bean="parameterSourceFactory"
+            factory-method="createParameterSourceNoCache">
+    <constructor-arg value="" />
+</bean>
+
+<bean id="parameterSourceFactory"
+        class="o.s.integration.jdbc.ExpressionEvaluatingSqlParameterSourceFactory">
+    <property name="sqlParameterTypes">
+        <map>
+            <entry key="status" value="#{ T(java.sql.Types).BINARY}" />
+        </map>
+    </property>
+</bean>
+----
+
 IMPORTANT: Use the `createParameterSourceNoCache` factory method; otherwise the parameter source will cache the result of the evaluation.
 Also note that, because caching is disabled, if the same parameter name appears in the select query multiple times, it will be re-evaluated for each occurrence.
 
@@ -106,14 +131,14 @@ The transaction manager configuration is not shown, but as long as it is aware o
 A common use case is for the downstream channels to be direct channels (the default), so that the endpoints are invoked in the same thread, and hence the same transaction.
 Then if any of them fail, the transaction rolls back and the input data is reverted to its original state.
 
-[[jdbc-max-rows-per-poll-versus-max-messages-per-poll]]
-==== Max-rows-per-poll versus Max-messages-per-poll
+[[jdbc-max-rows-versus-max-messages-per-poll]]
+==== Max-rows versus Max-messages-per-poll
 
-The _JDBC Inbound Channel Adapter_ defines an attribute `max-rows-per-poll`.
+The _JDBC Inbound Channel Adapter_ defines an attribute `max-rows`.
 When you specify the adapter's _Poller_, you can also define a property called `max-messages-per-poll`.
 While these two attributes look similar, their meaning is quite different.
 
-`max-messages-per-poll` specifies the number of times the query is executed per polling interval, whereas `max-rows-per-poll` specifies the number of rows returned for each execution.
+`max-messages-per-poll` specifies the number of times the query is executed per polling interval, whereas `max-rows` specifies the number of rows returned for each execution.
 
 Under normal circumstances, you would likely not want to set the Poller's `max-messages-per-poll` property when using the _JDBC Inbound Channel Adapter_.
 Its default value is _1_, which means that the _JDBC Inbound Channel Adapter_'s https://docs.spring.io/spring-integration/api/org/springframework/integration/jdbc/JdbcPollingChannelAdapter.html#receive()[`receive()`] method is executed exactly once for each poll interval.
@@ -121,9 +146,12 @@ Its default value is _1_, which means that the _JDBC Inbound Channel Adapter_'s 
 Setting the `max-messages-per-poll` attribute to a larger value means that the query is executed that many times back to back.
 For more information regarding the `max-messages-per-poll` attribute, please see <<channel-adapter-namespace-inbound>>.
 
-In contrast, the `max-rows-per-poll` attribute, if greater than _0_, specifies the maximum number of rows that will be used from the query result set, per execution of the `receive()` method.
+In contrast, the `max-rows` attribute, if greater than _0_, specifies the maximum number of rows that will be used from the query result set, per execution of the `receive()` method.
 If the attribute is set to _0_, then all rows will be included in the resulting message.
 If not explicitly set, the attribute defaults to _0_.
+
+NOTE: It is recommended to use result set limiting via vendor-specific query options, for example MySQL `LIMIT` or SQL Server `TOP` or Oracle's `ROWNUM`.
+See the particular vendor documentation for more information.
 
 [[jdbc-outbound-channel-adapter]]
 === Outbound Channel Adapter
@@ -207,7 +235,7 @@ public MessageHandler jdbcMessageHandler(DataSource dataSource) {
             "INSERT INTO imagedb (image_name, content, description) VALUES (?, ?, ?)");
     jdbcMessageHandler.setPreparedStatementSetter((ps, m) -> {
         ps.setString(1, m.getHeaders().get(FileHeaders.FILENAME));
-        try (FileInputStream inputStream = new FileInputStream((File) m.getPayload())) {
+        try (FileInputStream inputStream = new FileInputStream((File) m.getPayload()); ) {
             ps.setBlob(2, inputStream);
         }
         catch (Exception e) {
@@ -277,8 +305,8 @@ The reply message is then generated from the result, like the inbound adapter, a
 [IMPORTANT]
 ====
 By default the component for the SELECT query returns only one, first row from the cursor.
-This can be adjusted with the `max-rows-per-poll` option.
-Consider to specify `max-rows-per-poll="0"` if you need to return all the rows from the SELECT.
+This can be adjusted with the `max-rows` option.
+Consider specifying `max-rows="0"` if you need to return all the rows from the SELECT.
 ====
 
 As with the channel adapters, there is also the option to provide `SqlParameterSourceFactory` instances for request and reply.
@@ -364,6 +392,31 @@ This `channelMessageStoreQueryProvider` provides the SQL queries and Spring Inte
 If your database is not listed, you can easily extend the `AbstractChannelMessageStoreQueryProvider` class and provide your own custom queries.
 
 Since _version 4.0_, the `MESSAGE_SEQUENCE` column has been added to the table to ensure first-in-first-out (FIFO) queueing even when messages are stored in the same millisecond.
+
+Since _version 5.0_, by overloading `ChannelMessageStorePreparedStatementSetter` class you can provide custom implementation for message insertion in the `JdbcChannelMessageStore`.
+It might be different columns or table structure or serialization strategy.
+For example, instead of default serialization to `byte[]`, we can store its structure in JSON string.
+
+Below example uses the default implementation of `setValues` to store common columns and overrides the behavior just to store the message payload as varchar.
+
+[source,java]
+----
+public class JsonPreparedStatementSetter extends ChannelMessageStorePreparedStatementSetter {
+
+    public JsonPreparedStatementSetter() {
+        super();
+    }
+
+    @Override
+    public void setValues(PreparedStatement preparedStatement, Message<?> requestMessage,
+        Object groupId, String region, 	boolean priorityEnabled) throws SQLException {
+        // Populate common columns
+        super.setValues(preparedStatement, requestMessage, groupId, region, priorityEnabled);
+        // Store message payload as varchar
+        preparedStatement.setString(6, requestMessage.getPayload().toString());
+    }
+}
+----
 
 [IMPORTANT]
 =====
@@ -760,7 +813,7 @@ Furthermore, if you need even more control over how parameters are retrieved, co
                                    id=""
                                    ignore-column-meta-data="false"
                                    is-function="false"
-                                   max-rows-per-poll=""                          <2>
+                                   max-rows=""                                   <2>
                                    skip-undeclared-results=""                    <3>
                                    return-value-required="false"                 <4>
     <int:poller/>
@@ -794,7 +847,7 @@ _Optional_.
 Since _Spring Integration 3.0_. _Optional_.
 
 NOTE: When you declare a Poller, you may notice the Poller's `max-messages-per-poll` attribute.
-For information about how it relates to the `max-rows-per-poll` attribute of the _Stored Procedure Inbound Channel Adapter_, please see <<jdbc-max-rows-per-poll-versus-max-messages-per-poll>> for a thorough discussion.
+For information about how it relates to the `max-rows` attribute of the _Stored Procedure Inbound Channel Adapter_, please see <<jdbc-max-rows-versus-max-messages-per-poll>> for a thorough discussion.
 The meaning of the attributes is the same as for the _JDBC Inbound Channel Adapter_.
 
 [[stored-procedure-outbound-channel-adapter]]
@@ -995,6 +1048,8 @@ Therefore `prefix` property must be used on the `DefaultLockRepository` bean def
 Sometimes it happens that one application has moved to the state when it can't release distributed lock - remove the particular record in the data base.
 For this purpose such dead locks can be expired by the other application on the next locking invocation.
 The `timeToLive` (TTL) option on the `DefaultLockRepository` is provided for this purpose.
+The user may also want to specify `CLIENT_ID` for the locks stored for a given `DefaultLockRepository` instance.
+In this case you can specify the `id` to be associated with the `DefaultLockRepository` as a constructor parameter.
 
 [[jdbc-metadata-store]]
 === JDBC Metadata Store

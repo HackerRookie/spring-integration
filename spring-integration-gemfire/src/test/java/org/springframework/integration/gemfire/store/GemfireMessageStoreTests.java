@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,10 +33,11 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import org.springframework.data.gemfire.CacheFactoryBean;
-import org.springframework.data.gemfire.RegionFactoryBean;
+import org.springframework.data.gemfire.GenericRegionFactoryBean;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.history.MessageHistory;
 import org.springframework.integration.store.MessageGroup;
+import org.springframework.integration.store.MessageGroupMetadata;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.test.util.TestUtils;
 import org.springframework.messaging.Message;
@@ -47,6 +48,7 @@ import org.springframework.messaging.support.GenericMessage;
  * @author David Turanski
  * @author Gary Russell
  * @author Artem Bilan
+ *
  * @since 2.1
  */
 public class GemfireMessageStoreTests {
@@ -56,10 +58,8 @@ public class GemfireMessageStoreTests {
 	private static Region<Object, Object> region;
 
 	@Test
-	public void addAndGetMessage() throws Exception {
+	public void addAndGetMessage() {
 		GemfireMessageStore store = new GemfireMessageStore(region);
-		store.afterPropertiesSet();
-
 		Message<?> message = MessageBuilder.withPayload("test").build();
 		store.addMessage(message);
 		Message<?> retrieved = store.getMessage(message.getHeaders().getId());
@@ -68,26 +68,22 @@ public class GemfireMessageStoreTests {
 
 	@Test
 	public void testRegionConstructor() throws Exception {
-		RegionFactoryBean<Object, Object> region = new RegionFactoryBean<Object, Object>() {
-
-		};
+		GenericRegionFactoryBean<Object, Object> region = new GenericRegionFactoryBean<>();
 		region.setName("someRegion");
 		region.setCache(cacheFactoryBean.getObject());
 		region.afterPropertiesSet();
 
 		GemfireMessageStore store = new GemfireMessageStore(region.getObject());
-		store.afterPropertiesSet();
 		assertSame(region.getObject(), TestUtils.getPropertyValue(store, "messageStoreRegion"));
 
 		region.destroy();
 	}
 
 	@Test
-	public void testWithMessageHistory() throws Exception {
+	public void testWithMessageHistory() {
 		GemfireMessageStore store = new GemfireMessageStore(region);
-		store.afterPropertiesSet();
 
-		Message<?> message = new GenericMessage<String>("Hello");
+		Message<?> message = new GenericMessage<>("Hello");
 		DirectChannel fooChannel = new DirectChannel();
 		fooChannel.setBeanName("fooChannel");
 		DirectChannel barChannel = new DirectChannel();
@@ -106,12 +102,11 @@ public class GemfireMessageStoreTests {
 	}
 
 	@Test
-	public void testAddAndRemoveMessagesFromMessageGroup() throws Exception {
+	public void testAddAndRemoveMessagesFromMessageGroup() {
 		GemfireMessageStore messageStore = new GemfireMessageStore(region);
-		messageStore.afterPropertiesSet();
 
 		String groupId = "X";
-		List<Message<?>> messages = new ArrayList<Message<?>>();
+		List<Message<?>> messages = new ArrayList<>();
 		for (int i = 0; i < 25; i++) {
 			Message<String> message = MessageBuilder.withPayload("foo").setCorrelationId(groupId).build();
 			messageStore.addMessagesToGroup(groupId, message);
@@ -121,6 +116,29 @@ public class GemfireMessageStoreTests {
 		assertEquals(25, group.size());
 		messageStore.removeMessagesFromGroup(groupId, messages);
 		group = messageStore.getMessageGroup(groupId);
+		assertEquals(0, group.size());
+	}
+
+	@Test
+	public void testAddAndRemoveMessagesFromMessageGroupWithPrefix() {
+		GemfireMessageStore messageStore = new GemfireMessageStore(region, "foo_");
+
+		String groupId = "X";
+		List<Message<?>> messages = new ArrayList<>();
+		for (int i = 0; i < 25; i++) {
+			Message<String> message = MessageBuilder.withPayload("foo").setCorrelationId(groupId).build();
+			messageStore.addMessagesToGroup(groupId, message);
+			messages.add(message);
+		}
+
+		MessageGroupMetadata messageGroupMetadata =
+				(MessageGroupMetadata) region.get("foo_" + "MESSAGE_GROUP_" + groupId);
+
+		assertNotNull(messageGroupMetadata);
+		assertEquals(25, messageGroupMetadata.size());
+
+		messageStore.removeMessagesFromGroup(groupId, messages);
+		MessageGroup group = messageStore.getMessageGroup(groupId);
 		assertEquals(0, group.size());
 	}
 

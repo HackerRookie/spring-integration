@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2016 the original author or authors.
+ * Copyright 2014-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.springframework.integration.support.utils;
 
 import java.io.UnsupportedEncodingException;
+import java.util.function.Supplier;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -25,6 +26,10 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.integration.support.DefaultMessageBuilderFactory;
 import org.springframework.integration.support.MessageBuilderFactory;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageDeliveryException;
+import org.springframework.messaging.MessageHandlingException;
+import org.springframework.messaging.MessagingException;
 import org.springframework.util.Assert;
 
 /**
@@ -137,6 +142,48 @@ public final class IntegrationUtils {
 		catch (UnsupportedEncodingException e) {
 			throw new IllegalArgumentException(e);
 		}
+	}
+
+	/**
+	 * If the exception is not a {@link MessagingException} or does not have
+	 * a {@link MessagingException#getFailedMessage() failedMessage}, wrap it
+	 * in a new {@link MessageDeliveryException} with the message.
+	 * @param message the message.
+	 * @param text a Supplier for the new exception's message text.
+	 * @param e the exception.
+	 * @return the wrapper, if necessary, or the original exception.
+	 * @since 5.0.4
+	 */
+	public static RuntimeException wrapInDeliveryExceptionIfNecessary(Message<?> message, Supplier<String> text, Exception e) {
+		RuntimeException runtimeException = (e instanceof RuntimeException)
+				? (RuntimeException) e
+				: new MessageDeliveryException(message, text.get(), e);
+		if (!(e instanceof MessagingException) ||
+				((MessagingException) e).getFailedMessage() == null) {
+			runtimeException = new MessageDeliveryException(message, text.get(), e);
+		}
+		return runtimeException;
+	}
+
+	/**
+	 * If the exception is not a {@link MessagingException} or does not have
+	 * a {@link MessagingException#getFailedMessage() failedMessage}, wrap it
+	 * in a new {@link MessageHandlingException} with the message.
+	 * @param message the message.
+	 * @param text a Supplier for the new exception's message text.
+	 * @param e the exception.
+	 * @return the wrapper, if necessary, or the original exception.
+	 * @since 5.0.4
+	 */
+	public static RuntimeException wrapInHandlingExceptionIfNecessary(Message<?> message, Supplier<String> text, Exception e) {
+		RuntimeException runtimeException = (e instanceof RuntimeException)
+				? (RuntimeException) e
+				: new MessageHandlingException(message, text.get(), e);
+		if (!(e instanceof MessagingException) ||
+				((MessagingException) e).getFailedMessage() == null) {
+			runtimeException = new MessageHandlingException(message, text.get(), e);
+		}
+		return runtimeException;
 	}
 
 }

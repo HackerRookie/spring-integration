@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,13 @@
 package org.springframework.integration.dsl;
 
 import org.springframework.expression.Expression;
-import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.core.GenericSelector;
 import org.springframework.integration.core.MessageSelector;
 import org.springframework.integration.filter.ExpressionEvaluatingSelector;
 import org.springframework.integration.filter.MethodInvokingSelector;
-import org.springframework.integration.handler.LambdaMessageProcessor;
 import org.springframework.integration.router.RecipientListRouter;
+import org.springframework.integration.util.ClassUtils;
 import org.springframework.messaging.MessageChannel;
-import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 /**
@@ -98,23 +96,20 @@ public class RecipientListRouterSpec extends AbstractRouterSpec<RecipientListRou
 	 * @return the router spec.
 	 */
 	public <P> RecipientListRouterSpec recipient(String channelName, GenericSelector<P> selector) {
+		MessageSelector messageSelector = wrapToMessageSelectorIfNecessary(selector);
+		this.handler.addRecipient(channelName, messageSelector);
+		return _this();
+	}
+
+	private <P> MessageSelector wrapToMessageSelectorIfNecessary(GenericSelector<P> selector) {
 		MessageSelector messageSelector;
 		if (selector instanceof MessageSelector) {
 			messageSelector = (MessageSelector) selector;
 		}
 		else {
-			messageSelector =
-					isLambda(selector)
-							? new MethodInvokingSelector(new LambdaMessageProcessor(selector, null))
-							: new MethodInvokingSelector(selector);
+			messageSelector = new MethodInvokingSelector(selector, ClassUtils.SELECTOR_ACCEPT_METHOD);
 		}
-		this.handler.addRecipient(channelName, messageSelector);
-		return _this();
-	}
-
-	private static boolean isLambda(Object o) {
-		Class<?> aClass = o.getClass();
-		return aClass.isSynthetic() && !aClass.isAnonymousClass() && !aClass.isLocalClass();
+		return messageSelector;
 	}
 
 	/**
@@ -172,16 +167,7 @@ public class RecipientListRouterSpec extends AbstractRouterSpec<RecipientListRou
 	 * @return the router spec.
 	 */
 	public <P> RecipientListRouterSpec recipient(MessageChannel channel, GenericSelector<P> selector) {
-		MessageSelector messageSelector;
-		if (selector instanceof MessageSelector) {
-			messageSelector = (MessageSelector) selector;
-		}
-		else {
-			messageSelector =
-					isLambda(selector)
-							? new MethodInvokingSelector(new LambdaMessageProcessor(selector, null))
-							: new MethodInvokingSelector(selector);
-		}
+		MessageSelector messageSelector = wrapToMessageSelectorIfNecessary(selector);
 		this.handler.addRecipient(channel, messageSelector);
 		return _this();
 	}
@@ -204,8 +190,7 @@ public class RecipientListRouterSpec extends AbstractRouterSpec<RecipientListRou
 	 * @return the router spec.
 	 */
 	public <P> RecipientListRouterSpec recipientFlow(GenericSelector<P> selector, IntegrationFlow subFlow) {
-		Assert.notNull(subFlow, "'subFlow' must not be null");
-		DirectChannel channel = populateSubFlow(subFlow);
+		MessageChannel channel = obtainInputChannelFromFlow(subFlow);
 		return recipient(channel, selector);
 	}
 
@@ -213,7 +198,6 @@ public class RecipientListRouterSpec extends AbstractRouterSpec<RecipientListRou
 	 * Adds a subflow that will be invoked as a recipient.
 	 * @param subFlow the subflow.
 	 * @return the router spec.
-	 * @since 1.2
 	 */
 	public RecipientListRouterSpec recipientFlow(IntegrationFlow subFlow) {
 		return recipientFlow((String) null, subFlow);
@@ -235,20 +219,10 @@ public class RecipientListRouterSpec extends AbstractRouterSpec<RecipientListRou
 	 * @param expression the expression.
 	 * @param subFlow the subflow.
 	 * @return the router spec.
-	 * @since 1.2
 	 */
 	public RecipientListRouterSpec recipientFlow(Expression expression, IntegrationFlow subFlow) {
-		Assert.notNull(subFlow, "'subFlow' must not be null");
-		DirectChannel channel = populateSubFlow(subFlow);
+		MessageChannel channel = obtainInputChannelFromFlow(subFlow);
 		return recipient(channel, expression);
-	}
-
-	private DirectChannel populateSubFlow(IntegrationFlow subFlow) {
-		DirectChannel channel = new DirectChannel();
-		IntegrationFlowBuilder flowBuilder = IntegrationFlows.from(channel);
-		subFlow.configure(flowBuilder);
-		this.componentsToRegister.put(flowBuilder.get(), null);
-		return channel;
 	}
 
 }

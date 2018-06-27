@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import org.apache.commons.logging.LogFactory;
  * Abstract base class for channel metrics implementations.
  *
  * @author Gary Russell
+ *
  * @since 4.2
  *
  */
@@ -34,6 +35,10 @@ public abstract class AbstractMessageChannelMetrics implements ConfigurableMetri
 
 	private volatile boolean fullStatsEnabled;
 
+	/**
+	 * Construct an instance with the provided name.
+	 * @param name the name.
+	 */
 	public AbstractMessageChannelMetrics(String name) {
 		this.name = name;
 	}

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import static org.junit.Assert.fail;
 
 import java.io.Serializable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -61,9 +61,9 @@ import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.dsl.IntegrationFlow;
 import org.springframework.integration.dsl.IntegrationFlows;
+import org.springframework.integration.dsl.MessageChannels;
 import org.springframework.integration.dsl.Pollers;
 import org.springframework.integration.dsl.Transformers;
-import org.springframework.integration.dsl.channel.MessageChannels;
 import org.springframework.integration.handler.AbstractReplyProducingMessageHandler;
 import org.springframework.integration.handler.GenericHandler;
 import org.springframework.integration.handler.advice.ErrorMessageSendingRecoverer;
@@ -86,6 +86,7 @@ import org.springframework.messaging.SubscribableChannel;
 import org.springframework.messaging.support.ErrorMessage;
 import org.springframework.messaging.support.GenericMessage;
 import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -265,7 +266,7 @@ public class IntegrationFlowTests {
 		catch (Exception e) {
 			assertThat(e, instanceOf(BeanCreationException.class));
 			assertThat(e.getMessage(), containsString("'.fixedSubscriberChannel()' " +
-					"can't be the last EIP-method in the IntegrationFlow definition"));
+					"can't be the last EIP-method in the 'IntegrationFlow' definition"));
 		}
 		finally {
 			if (context != null) {
@@ -444,6 +445,7 @@ public class IntegrationFlowTests {
 	}
 
 	@Autowired
+	@Qualifier("errorRecovererFunction")
 	private Function<String, String> errorRecovererFlowGateway;
 
 	@Test
@@ -613,7 +615,7 @@ public class IntegrationFlowTests {
 		@Bean
 		public IntegrationFlow subscribersFlow() {
 			return flow -> flow
-					.publishSubscribeChannel(Executors.newCachedThreadPool(), s -> s
+					.publishSubscribeChannel(executor(), s -> s
 							.subscribe(f -> f
 									.<Integer>handle((p, h) -> p / 2)
 									.channel(MessageChannels.queue("subscriber1Results")))
@@ -622,6 +624,13 @@ public class IntegrationFlowTests {
 									.channel(MessageChannels.queue("subscriber2Results"))))
 					.<Integer>handle((p, h) -> p * 3)
 					.channel(MessageChannels.queue("subscriber3Results"));
+		}
+
+		@Bean
+		public Executor executor() {
+			ThreadPoolTaskExecutor tpte = new ThreadPoolTaskExecutor();
+			tpte.setCorePoolSize(50);
+			return tpte;
 		}
 
 		@Bean
@@ -789,7 +798,7 @@ public class IntegrationFlowTests {
 
 		@Bean
 		public IntegrationFlow errorRecovererFlow() {
-			return IntegrationFlows.from(Function.class)
+			return IntegrationFlows.from(Function.class, "errorRecovererFunction")
 					.handle((GenericHandler<?>) (p, h) -> {
 						throw new RuntimeException("intentional");
 					}, e -> e.advice(retryAdvice()))

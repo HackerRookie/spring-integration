@@ -301,6 +301,38 @@ public class AmqpJavaApplication {
 }
 ----
 
+=== Polled Inbound Channel Adapter
+
+Starting with _version 5.0.1_, a polled channel adapter is provided, allowing fetching individual messages on-demand, for example with a `MessageSourcePollingTemplate` or a poller.
+See <<deferred-acks-message-source>> for more information.
+
+It does not currently have XML configuration.
+
+[source, java]
+----
+@Bean
+public AmqpMessageSource source(ConnectionFactory connectionFactory) {
+    return new AmpqpMessageSource(connectionFactory, "someQueue");
+}
+----
+
+Refer to the javadocs for configuration properties.
+
+With the Java DSL:
+
+[source, java]
+----
+@Bean
+public IntegrationFlow flow() {
+    return IntegrationFlows.from(Amqp.inboundPolledAdapter(connectionFactory(), DSL_QUEUE),
+                    e -> e.poller(Pollers.fixedDelay(1_000)).autoStartup(false))
+            .handle(p -> {
+                ...
+            })
+            .get();
+}
+----
+
 [[amqp-inbound-gateway]]
 === Inbound Gateway
 
@@ -1356,6 +1388,8 @@ public IntegrationFlow pubSubInFlow(ConnectionFactory connectionFactory) {
 [[amqp-message-headers]]
 === AMQP Message Headers
 
+==== Overview
+
 The Spring Integration AMQP Adapters will map all AMQP properties and headers automatically.
 (This is a change in 4.3 - previously, only standard headers were mapped).
 These properties will be copied by default to and from Spring Integration `MessageHeaders` using the
@@ -1391,7 +1425,7 @@ Class `org.springframework.amqp.support.AmqpHeaders` identifies the default head
 
 * amqp_contentLength
 
-* content-type
+* content-type (see <<amqp-content-type>>)
 
 * amqp_correlationId
 
@@ -1471,6 +1505,75 @@ Negated patterns get priority, so a list such as
 
 IMPORTANT: If you have a user defined header that begins with `!` that you *do* wish to map, you need to escape it with
 `\` thus: `STANDARD_REQUEST_HEADERS,\!myBangHeader` and it *WILL* be mapped.
+
+NOTE: Starting with _version 5.1_, the `DefaultAmqpHeaderMapper` will fall back to mapping `MessageHeaders.ID` and `MessageHeaders.TIMESTAMP` to `MessageProperties.messageId` and `MessageProperties.timestamp` respectively, if the corresponding `amqp_messageId` or `amqp_timestamp` headers are not present on outbound messages.
+Inbound properties will be mapped to the `amqp_*` headers as before.
+It is useful to populate the `messageId` property when message consumers are using stateful retry.
+
+[[amqp-content-type]]
+==== contentType Header
+
+Unlike other headers, the `AmqpHeaders.CONTENT_TYPE` is not prefixed with `amqp_`; this allows transparent passing of the contentType header across different technologies.
+E.g. an inbound HTTP message sent to a RabbitMQ queue.
+
+The `contentType` header is mapped to Spring AMQP's `MessageProperties.contentType` property and that is subsequently mapped to RabbitMQ's `content_type` property.
+
+Prior to _version 5.1_, this header was also mapped as an entry in the `MessageProperties.headers` map; this was incorrect and, furthermore, the value could be wrong since the underlying Spring AMQP message converter might have changed the content type.
+Such a change would be reflected in the first-class `content_type` property, but not in the RabbitMQ headers map.
+Inbound mapping ignored the headers map value.
+`contentType` is no longer mapped to an entry in the headers map.
+
+[[amqp-strict-ordering]]
+=== Strict Message Ordering
+
+==== Inbound
+
+If you require strict ordering of inbound messages, you must configure the inbound listener container's `prefetchCount` property to `1`.
+This is because if a message fails and is redelivered, it will arrive after existing prefetched messages.
+Since Spring AMQP _version 2.0_, the `prefetchCount` defaults to `250` for improved performance.
+Strict ordering requirements come at the cost of decreased performance.
+
+==== Outbound
+
+Consider the following simple integration flow:
+
+[source, java]
+----
+@Bean
+public IntegrationFlow flow(RabbitTemplate template) {
+    return IntegrationFlows.from(Gateway.class)
+            .split(s -> s.delimiters(","))
+            .<String, String>transform(String::toUpperCase)
+            .handle(Amqp.outboundAdapter(template).routingKey("rk"))
+            .get();
+}
+----
+
+Let's say we send a message `a,b,c` to the gateway, while it is likely that messages `A`, `B`, `C` will be sent in order, there is no guarantee.
+This is because the template "borrows" a channel from the cache for each send and there is no guarantee that the same channel will be used for each.
+One solution is to start a transaction before the splitter, but transactions are very expensive in RabbitMQ and can reduce performance several hundred fold.
+
+To solve this problem in a more efficient manner, starting with _version 5.1_, Spring Integration provides the `BoundRabbitChannelAdvice` which is a `HandleMessageAdvice` - see <<handle-message-advice>>.
+When applied before the splitter, this ensures that all downstream operations are performed on the same channel and, optionally, can wait until publisher confirms for all sent messages are received (if the connection factory is configured for confirms).
+
+[source, java]
+----
+@Bean
+public IntegrationFlow flow(RabbitTemplate template) {
+    return IntegrationFlows.from(Gateway.class)
+            .split(s -> s.delimiters(",")
+                    .advice(new BoundRabbitChannelAdvice(template, Duration.ofSeconds(10))))
+            .<String, String>transform(String::toUpperCase)
+            .handle(Amqp.outboundAdapter(template).routingKey("rk"))
+            .get();
+}
+----
+
+Notice that the same `RabbitTemplate` (which implements `RabbitOperations`) is used in the advice and the outbound adapter.
+The advice runs the downstream flow within the template's `invoke` method so that all operations run on the same channel.
+If the optional timeout is provided, when the flow completes, the advice calls the `waitForConfirmsOrDie` method, which will throw an exception if the confirms are not received within the specified time.
+
+IMPORTANT: There must be no thread handoffs in the downstream flow (`QueueChannel`, `ExecutorChannel`, etc).
 
 === AMQP Samples
 

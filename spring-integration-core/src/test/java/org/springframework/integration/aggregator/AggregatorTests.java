@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -102,7 +102,7 @@ public class AggregatorTests {
 		SimpleMessageStore store = new SimpleMessageStore();
 
 		SimpleMessageGroupFactory messageGroupFactory =
-				new SimpleMessageGroupFactory(SimpleMessageGroupFactory.GroupType.BLOCKING_QUEUE);
+				new SimpleMessageGroupFactory(SimpleMessageGroupFactory.GroupType.LIST);
 
 		store.setMessageGroupFactory(messageGroupFactory);
 
@@ -272,7 +272,7 @@ public class AggregatorTests {
 		Message<?> message = createMessage(3, "ABC", 2, 1, replyChannel, null);
 		this.aggregator.handleMessage(message);
 		this.store.expireMessageGroups(-10000);
-		Message<?> reply = replyChannel.receive(1000);
+		Message<?> reply = replyChannel.receive(0);
 		assertNull("No message should have been sent normally", reply);
 		Message<?> discardedMessage = discardChannel.receive(1000);
 		assertNotNull("A message should have been discarded", discardedMessage);

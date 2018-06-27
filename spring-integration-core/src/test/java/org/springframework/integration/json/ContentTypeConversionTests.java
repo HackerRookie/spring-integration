@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 the original author or authors.
+ * Copyright 2017-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,12 +36,12 @@ import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.dsl.IntegrationFlow;
 import org.springframework.integration.dsl.IntegrationFlows;
-import org.springframework.integration.dsl.channel.MessageChannels;
+import org.springframework.integration.dsl.MessageChannels;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
+import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.test.context.junit4.SpringRunner;
 
 /**
@@ -94,12 +94,12 @@ public class ContentTypeConversionTests {
 		@Bean
 		public MessageChannel serviceChannel(final AtomicReference<Object> sendData) {
 			return MessageChannels.direct()
-					.interceptor(new ChannelInterceptorAdapter() {
+					.interceptor(new ChannelInterceptor() {
 
 						@Override
 						public Message<?> preSend(Message<?> message, MessageChannel channel) {
 							sendData.set(message.getPayload());
-							return super.preSend(message, channel);
+							return message;
 						}
 
 					})

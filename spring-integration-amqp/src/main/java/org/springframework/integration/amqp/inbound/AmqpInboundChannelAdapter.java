@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,16 +17,20 @@
 package org.springframework.integration.amqp.inbound;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.core.Message;
-import org.springframework.amqp.rabbit.core.ChannelAwareMessageListener;
 import org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer;
+import org.springframework.amqp.rabbit.listener.api.ChannelAwareMessageListener;
 import org.springframework.amqp.rabbit.listener.exception.ListenerExecutionFailedException;
 import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.amqp.support.converter.MessageConversionException;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.amqp.support.converter.SimpleMessageConverter;
 import org.springframework.core.AttributeAccessor;
+import org.springframework.integration.IntegrationMessageHeaderAccessor;
+import org.springframework.integration.StaticMessageHeaderAccessor;
 import org.springframework.integration.amqp.support.AmqpHeaderMapper;
 import org.springframework.integration.amqp.support.AmqpMessageHeaderErrorMessageStrategy;
 import org.springframework.integration.amqp.support.DefaultAmqpHeaderMapper;
@@ -197,25 +201,25 @@ public class AmqpInboundChannelAdapter extends MessageProducerSupport implements
 		@SuppressWarnings("unchecked")
 		@Override
 		public void onMessage(final Message message, final Channel channel) throws Exception {
+			boolean retryDisabled = AmqpInboundChannelAdapter.this.retryTemplate == null;
 			try {
-				if (AmqpInboundChannelAdapter.this.retryTemplate == null) {
-					try {
-						processMessage(message, channel);
-					}
-					finally {
-						attributesHolder.remove();
-					}
+				if (retryDisabled) {
+					createAndSend(message, channel);
 				}
 				else {
+					final org.springframework.messaging.Message<Object> toSend = createMessage(message, channel);
 					AmqpInboundChannelAdapter.this.retryTemplate.execute(context -> {
-								processMessage(message, channel);
+								StaticMessageHeaderAccessor.getDeliveryAttempt(toSend).incrementAndGet();
+								setAttributesIfNecessary(message, toSend);
+								sendMessage(toSend);
 								return null;
 							},
 							(RecoveryCallback<Object>) AmqpInboundChannelAdapter.this.recoveryCallback);
 				}
 			}
-			catch (RuntimeException e) {
+			catch (MessageConversionException e) {
 				if (getErrorChannel() != null) {
+					setAttributesIfNecessary(message, null);
 					getMessagingTemplate().send(getErrorChannel(), buildErrorMessage(null,
 							new ListenerExecutionFailedException("Message conversion failed", e, message)));
 				}
@@ -223,9 +227,20 @@ public class AmqpInboundChannelAdapter extends MessageProducerSupport implements
 					throw e;
 				}
 			}
+			finally {
+				if (retryDisabled) {
+					attributesHolder.remove();
+				}
+			}
 		}
 
-		private void processMessage(Message message, Channel channel) {
+		private void createAndSend(Message message, Channel channel) {
+			org.springframework.messaging.Message<Object> messagingMessage = createMessage(message, channel);
+			setAttributesIfNecessary(message, messagingMessage);
+			sendMessage(messagingMessage);
+		}
+
+		private org.springframework.messaging.Message<Object> createMessage(Message message, Channel channel) {
 			Object payload = AmqpInboundChannelAdapter.this.messageConverter.fromMessage(message);
 			Map<String, Object> headers = AmqpInboundChannelAdapter.this.headerMapper
 					.toHeadersFromRequest(message.getMessageProperties());
@@ -234,12 +249,14 @@ public class AmqpInboundChannelAdapter extends MessageProducerSupport implements
 				headers.put(AmqpHeaders.DELIVERY_TAG, message.getMessageProperties().getDeliveryTag());
 				headers.put(AmqpHeaders.CHANNEL, channel);
 			}
+			if (AmqpInboundChannelAdapter.this.retryTemplate != null) {
+				headers.put(IntegrationMessageHeaderAccessor.DELIVERY_ATTEMPT, new AtomicInteger());
+			}
 			final org.springframework.messaging.Message<Object> messagingMessage = getMessageBuilderFactory()
 					.withPayload(payload)
 					.copyHeaders(headers)
 					.build();
-			setAttributesIfNecessary(message, messagingMessage);
-			sendMessage(messagingMessage);
+			return messagingMessage;
 		}
 
 		@Override

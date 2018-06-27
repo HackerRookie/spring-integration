@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,6 +41,7 @@ import org.junit.Test;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.channel.QueueChannel;
 import org.springframework.integration.handler.ServiceActivatingHandler;
@@ -56,6 +56,7 @@ import org.springframework.messaging.SubscribableChannel;
  * @author Gary Russell
  * @author Artem Bilan
  * @author Marcin Pilaczynski
+ *
  * @since 2.0
  *
  */
@@ -185,18 +186,19 @@ public class UdpChannelAdapterTests {
 		final CountDownLatch receiverReadyLatch = new CountDownLatch(1);
 		final CountDownLatch replyReceivedLatch = new CountDownLatch(1);
 		//main thread sends the reply using the headers, this thread will receive it
-		Executors.newSingleThreadExecutor().execute(() -> {
-			DatagramPacket answer = new DatagramPacket(new byte[2000], 2000);
-			try {
-				receiverReadyLatch.countDown();
-				socket.receive(answer);
-				theAnswer.set(answer);
-				replyReceivedLatch.countDown();
-			}
-			catch (IOException e) {
-				e.printStackTrace();
-			}
-		});
+		new SimpleAsyncTaskExecutor()
+				.execute(() -> {
+					DatagramPacket answer = new DatagramPacket(new byte[2000], 2000);
+					try {
+						receiverReadyLatch.countDown();
+						socket.receive(answer);
+						theAnswer.set(answer);
+						replyReceivedLatch.countDown();
+					}
+					catch (IOException e) {
+						e.printStackTrace();
+					}
+				});
 		Message<byte[]> receivedMessage = (Message<byte[]>) channel.receive(10000);
 		assertEquals(new String(message.getPayload()), new String(receivedMessage.getPayload()));
 		String replyString = "reply:" + System.currentTimeMillis();
@@ -224,18 +226,14 @@ public class UdpChannelAdapterTests {
 		UnicastReceivingChannelAdapter adapter = new UnicastReceivingChannelAdapter(0);
 		adapter.setBeanName("test");
 		adapter.setOutputChannel(channel);
-//		SocketUtils.setLocalNicIfPossible(adapter);
 		adapter.start();
 		SocketTestUtils.waitListening(adapter);
 		int port = adapter.getPort();
 
-//		String whichNic = SocketUtils.chooseANic(false);
 		UnicastSendingMessageHandler handler = new UnicastSendingMessageHandler(
 				"localhost", port, false, true,
 				"localhost",
-//				whichNic,
 				0, 5000);
-//		handler.setLocalAddress(whichNic);
 		handler.setBeanFactory(mock(BeanFactory.class));
 		handler.afterPropertiesSet();
 		handler.start();
@@ -296,6 +294,7 @@ public class UdpChannelAdapterTests {
 		assertNotNull(receivedMessage);
 		assertEquals(new String(message.getPayload()), new String(receivedMessage.getPayload()));
 		adapter.stop();
+		handler.stop();
 	}
 
 	@Test
@@ -303,9 +302,9 @@ public class UdpChannelAdapterTests {
 		SubscribableChannel channel = new DirectChannel();
 		UnicastReceivingChannelAdapter adapter = new UnicastReceivingChannelAdapter(0);
 		adapter.setOutputChannel(channel);
-//		SocketUtils.setLocalNicIfPossible(adapter);
-		adapter.setOutputChannel(channel);
 		ServiceActivatingHandler handler = new ServiceActivatingHandler(new FailingService());
+		handler.setBeanFactory(mock(BeanFactory.class));
+		handler.afterPropertiesSet();
 		channel.subscribe(handler);
 		QueueChannel errorChannel = new QueueChannel();
 		adapter.setErrorChannel(errorChannel);

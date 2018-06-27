@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@
 
 package org.springframework.integration.channel;
 
+import java.util.concurrent.TimeUnit;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -27,6 +29,8 @@ import org.springframework.integration.support.management.DefaultMessageChannelM
 import org.springframework.integration.support.management.IntegrationManagedResource;
 import org.springframework.integration.support.management.MessageChannelMetrics;
 import org.springframework.integration.support.management.Statistics;
+import org.springframework.integration.support.management.metrics.MetricsCaptor;
+import org.springframework.integration.support.management.metrics.TimerFacade;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.PollableChannel;
 import org.springframework.util.Assert;
@@ -40,6 +44,7 @@ import org.springframework.util.StringUtils;
  *
  * @author Mark Fisher
  * @author Gary Russell
+ * @author Artyem Bilan
  */
 @IntegrationManagedResource
 public class NullChannel implements PollableChannel, MessageChannelMetrics,
@@ -58,6 +63,10 @@ public class NullChannel implements PollableChannel, MessageChannelMetrics,
 	private volatile boolean loggingEnabled = true;
 
 	private String beanName;
+
+	private MetricsCaptor metricsCaptor;
+
+	private TimerFacade successTimer;
 
 	@Override
 	public void setBeanName(String beanName) {
@@ -84,6 +93,11 @@ public class NullChannel implements PollableChannel, MessageChannelMetrics,
 	@Override
 	public String getComponentType() {
 		return "channel";
+	}
+
+	@Override
+	public void registerMetricsCaptor(MetricsCaptor registry) {
+		this.metricsCaptor = registry;
 	}
 
 	@Override
@@ -210,19 +224,35 @@ public class NullChannel implements PollableChannel, MessageChannelMetrics,
 	}
 
 	@Override
+	public boolean send(Message<?> message, long timeout) {
+		return send(message);
+	}
+
+	@Override
 	public boolean send(Message<?> message) {
 		if (this.loggingEnabled && this.logger.isDebugEnabled()) {
 			this.logger.debug("message sent to null channel: " + message);
 		}
 		if (this.countsEnabled) {
+			if (this.metricsCaptor != null) {
+				sendTimer().record(0, TimeUnit.MILLISECONDS);
+			}
 			this.channelMetrics.afterSend(this.channelMetrics.beforeSend(), true);
 		}
 		return true;
 	}
 
-	@Override
-	public boolean send(Message<?> message, long timeout) {
-		return this.send(message);
+	private TimerFacade sendTimer() {
+		if (this.successTimer == null) {
+			this.successTimer = this.metricsCaptor.timerBuilder(SEND_TIMER_NAME)
+					.tag("type", "channel")
+					.tag("name", getComponentName() == null ? "unknown" : getComponentName())
+					.tag("result", "success")
+					.tag("exception", "none")
+					.description("Subflow process time")
+					.build();
+		}
+		return this.successTimer;
 	}
 
 	@Override

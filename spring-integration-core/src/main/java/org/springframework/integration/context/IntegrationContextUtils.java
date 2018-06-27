@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package org.springframework.integration.context;
 import java.util.Properties;
 
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.expression.spel.support.SimpleEvaluationContext;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.integration.config.IntegrationConfigUtils;
 import org.springframework.integration.metadata.MetadataStore;
@@ -48,6 +49,8 @@ public abstract class IntegrationContextUtils {
 
 	public static final String INTEGRATION_EVALUATION_CONTEXT_BEAN_NAME = "integrationEvaluationContext";
 
+	public static final String INTEGRATION_SIMPLE_EVALUATION_CONTEXT_BEAN_NAME = "integrationSimpleEvaluationContext";
+
 	public static final String INTEGRATION_HEADER_CHANNEL_REGISTRY_BEAN_NAME = "integrationHeaderChannelRegistry";
 
 	public static final String INTEGRATION_GLOBAL_PROPERTIES_BEAN_NAME = "integrationGlobalProperties";
@@ -58,19 +61,22 @@ public abstract class IntegrationContextUtils {
 
 	public static final String DEFAULT_CONFIGURING_POSTPROCESSOR_BEAN_NAME = "DefaultConfiguringBeanFactoryPostProcessor";
 
-	public static final String MESSAGING_ANNOTATION_POSTPROCESSOR_NAME = IntegrationConfigUtils.BASE_PACKAGE
-			+ ".internalMessagingAnnotationPostProcessor";
+	public static final String MESSAGING_ANNOTATION_POSTPROCESSOR_NAME =
+			IntegrationConfigUtils.BASE_PACKAGE + ".internalMessagingAnnotationPostProcessor";
 
-	public static final String PUBLISHER_ANNOTATION_POSTPROCESSOR_NAME = IntegrationConfigUtils.BASE_PACKAGE +
-			".internalPublisherAnnotationBeanPostProcessor";
+	public static final String PUBLISHER_ANNOTATION_POSTPROCESSOR_NAME =
+			IntegrationConfigUtils.BASE_PACKAGE + ".internalPublisherAnnotationBeanPostProcessor";
 
-	public static final String INTEGRATION_CONFIGURATION_POST_PROCESSOR_BEAN_NAME = "IntegrationConfigurationBeanFactoryPostProcessor";
+	public static final String INTEGRATION_CONFIGURATION_POST_PROCESSOR_BEAN_NAME =
+			"IntegrationConfigurationBeanFactoryPostProcessor";
 
 	public static final String INTEGRATION_MESSAGE_HISTORY_CONFIGURER_BEAN_NAME = "messageHistoryConfigurer";
 
-	public static final String INTEGRATION_DATATYPE_CHANNEL_MESSAGE_CONVERTER_BEAN_NAME = "datatypeChannelMessageConverter";
+	public static final String INTEGRATION_DATATYPE_CHANNEL_MESSAGE_CONVERTER_BEAN_NAME =
+			"datatypeChannelMessageConverter";
 
-	public static final String INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME = "fixedSubscriberChannelBeanFactoryPostProcessor";
+	public static final String INTEGRATION_FIXED_SUBSCRIBER_CHANNEL_BPP_BEAN_NAME =
+			"fixedSubscriberChannelBeanFactoryPostProcessor";
 
 	public static final String GLOBAL_CHANNEL_INTERCEPTOR_PROCESSOR_BEAN_NAME = "globalChannelInterceptorProcessor";
 
@@ -84,7 +90,12 @@ public abstract class IntegrationContextUtils {
 
 	public static final String SPEL_PROPERTY_ACCESSOR_REGISTRAR_BEAN_NAME = "spelPropertyAccessorRegistrar";
 
-	public static final String ARGUMENT_RESOLVER_MESSAGE_CONVERTER_BEAN_NAME = "integrationArgumentResolverMessageConverter";
+	public static final String ARGUMENT_RESOLVER_MESSAGE_CONVERTER_BEAN_NAME =
+			"integrationArgumentResolverMessageConverter";
+
+	public static final String ARGUMENT_RESOLVERS_BEAN_NAME = "integrationArgumentResolvers";
+
+	public static final String LIST_ARGUMENT_RESOLVERS_BEAN_NAME = "integrationListArgumentResolvers";
 
 	/**
 	 * @param beanFactory BeanFactory for lookup, must not be null.
@@ -123,10 +134,22 @@ public abstract class IntegrationContextUtils {
 
 	/**
 	 * @param beanFactory BeanFactory for lookup, must not be null.
-	 * @return the instance of {@link StandardEvaluationContext} bean whose name is "integrationEvaluationContext" .
+	 * @return the instance of {@link StandardEvaluationContext} bean whose name is
+	 * {@value #INTEGRATION_EVALUATION_CONTEXT_BEAN_NAME}.
 	 */
 	public static StandardEvaluationContext getEvaluationContext(BeanFactory beanFactory) {
 		return getBeanOfType(beanFactory, INTEGRATION_EVALUATION_CONTEXT_BEAN_NAME, StandardEvaluationContext.class);
+	}
+
+	/**
+	 * @param beanFactory BeanFactory for lookup, must not be null.
+	 * @return the instance of {@link SimpleEvaluationContext} bean whose name is
+	 * {@value #INTEGRATION_SIMPLE_EVALUATION_CONTEXT_BEAN_NAME}.
+	 * @since 4.3.15
+	 */
+	public static SimpleEvaluationContext getSimpleEvaluationContext(BeanFactory beanFactory) {
+		return getBeanOfType(beanFactory, INTEGRATION_SIMPLE_EVALUATION_CONTEXT_BEAN_NAME,
+				SimpleEvaluationContext.class);
 	}
 
 	private static <T> T getBeanOfType(BeanFactory beanFactory, String beanName, Class<T> type) {
@@ -152,7 +175,8 @@ public abstract class IntegrationContextUtils {
 		Properties properties = new Properties();
 		properties.putAll(IntegrationProperties.defaults());
 		if (beanFactory != null) {
-			Properties userProperties = getBeanOfType(beanFactory, INTEGRATION_GLOBAL_PROPERTIES_BEAN_NAME, Properties.class);
+			Properties userProperties =
+					getBeanOfType(beanFactory, INTEGRATION_GLOBAL_PROPERTIES_BEAN_NAME, Properties.class);
 			if (userProperties != null) {
 				properties.putAll(userProperties);
 			}

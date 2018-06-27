@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.concurrent.Executor;
 
 import org.springframework.integration.MessageDispatchingException;
+import org.springframework.integration.support.utils.IntegrationUtils;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.MessageHandler;
@@ -145,7 +146,8 @@ public class UnicastingDispatcher extends AbstractDispatcher {
 				success = true; // we have a winner.
 			}
 			catch (Exception e) {
-				RuntimeException runtimeException = this.wrapExceptionIfNecessary(message, e);
+				RuntimeException runtimeException = IntegrationUtils.wrapInDeliveryExceptionIfNecessary(message,
+						() -> "Dispatcher failed to deliver Message", e);
 				exceptions.add(runtimeException);
 				this.handleExceptions(exceptions, message, !handlerIterator.hasNext());
 			}

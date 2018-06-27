@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 the original author or authors.
+ * Copyright 2017-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,12 +49,12 @@ import org.springframework.integration.codec.Codec;
 import org.springframework.integration.config.EnableIntegration;
 import org.springframework.integration.dsl.IntegrationFlow;
 import org.springframework.integration.dsl.IntegrationFlows;
+import org.springframework.integration.dsl.MessageChannels;
 import org.springframework.integration.dsl.Transformers;
-import org.springframework.integration.dsl.channel.MessageChannels;
+import org.springframework.integration.handler.advice.AbstractRequestHandlerAdvice;
 import org.springframework.integration.handler.advice.IdempotentReceiverInterceptor;
 import org.springframework.integration.selector.MetadataStoreSelector;
 import org.springframework.integration.support.MessageBuilder;
-import org.springframework.integration.transformer.DecodingTransformer;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHeaders;
@@ -87,6 +87,10 @@ public class TransformerTests {
 	@Qualifier("enricherInput3")
 	private FixedSubscriberChannel enricherInput3;
 
+	@Autowired
+	@Qualifier("enricherErrorChannel")
+	private PollableChannel enricherErrorChannel;
+
 
 	@Test
 	public void testContentEnricher() {
@@ -104,6 +108,11 @@ public class TransformerTests {
 		assertEquals("Bar Bar", result.getName());
 		assertNotNull(result.getDate());
 		assertThat(new Date(), Matchers.greaterThanOrEqualTo(result.getDate()));
+
+		this.enricherInput.send(new GenericMessage<>(new TestPojo("junk")));
+
+		Message<?> errorMessage = this.enricherErrorChannel.receive(10_000);
+		assertNotNull(errorMessage);
 	}
 
 	@Test
@@ -209,6 +218,9 @@ public class TransformerTests {
 	@Autowired
 	private PollableChannel idempotentDiscardChannel;
 
+	@Autowired
+	private PollableChannel adviceChannel;
+
 	@Test
 	public void transformWithHeader() {
 		QueueChannel replyChannel = new QueueChannel();
@@ -231,6 +243,7 @@ public class TransformerTests {
 		}
 
 		assertNotNull(this.idempotentDiscardChannel.receive(10000));
+		assertNotNull(this.adviceChannel.receive(10000));
 	}
 
 	@Configuration
@@ -238,9 +251,15 @@ public class TransformerTests {
 	public static class ContextConfiguration {
 
 		@Bean
+		public PollableChannel enricherErrorChannel() {
+			return new QueueChannel();
+		}
+
+		@Bean
 		public IntegrationFlow enricherFlow() {
 			return IntegrationFlows.from("enricherInput", true)
 					.enrich(e -> e.requestChannel("enrichChannel")
+							.errorChannel(enricherErrorChannel())
 							.requestPayloadExpression("payload")
 							.shouldClonePayload(false)
 							.propertyExpression("name", "payload['name']")
@@ -275,7 +294,12 @@ public class TransformerTests {
 		@Bean
 		public IntegrationFlow enrichFlow() {
 			return IntegrationFlows.from("enrichChannel")
-					.<TestPojo, Map<?, ?>>transform(p -> Collections.singletonMap("name", p.getName() + " Bar"))
+					.<TestPojo, Map<?, ?>>transform(p -> {
+						if ("junk".equals(p.getName())) {
+							throw new RuntimeException("intentional");
+						}
+						return Collections.singletonMap("name", p.getName() + " Bar");
+					})
 					.get();
 		}
 
@@ -298,10 +322,8 @@ public class TransformerTests {
 
 		@Bean
 		public IntegrationFlow decodingFlow() {
-			// TODO: Stored in an unnecessary variable to work around an eclipse type inference issue.
-			DecodingTransformer<Integer> transformer = Transformers.decoding(new MyCodec(), m -> Integer.class);
 			return f -> f
-					.transform(transformer)
+					.transform(Transformers.decoding(new MyCodec(), m -> Integer.class))
 					.channel("codecReplyChannel");
 		}
 
@@ -310,7 +332,7 @@ public class TransformerTests {
 			return f -> f
 					.enrichHeaders(h -> h
 							.header("Foo", "Bar")
-							.advice(idempotentReceiverInterceptor()))
+							.advice(idempotentReceiverInterceptor(), requestHandlerAdvice()))
 					.transform(new PojoTransformer());
 		}
 
@@ -323,9 +345,29 @@ public class TransformerTests {
 		public IdempotentReceiverInterceptor idempotentReceiverInterceptor() {
 			IdempotentReceiverInterceptor idempotentReceiverInterceptor =
 					new IdempotentReceiverInterceptor(new MetadataStoreSelector(m -> m.getPayload().toString()));
-			idempotentReceiverInterceptor.setDiscardChannel(idempotentDiscardChannel());
+			idempotentReceiverInterceptor.setDiscardChannelName("idempotentDiscardChannel");
 			idempotentReceiverInterceptor.setThrowExceptionOnRejection(true);
 			return idempotentReceiverInterceptor;
+		}
+
+		@Bean
+		public AbstractRequestHandlerAdvice requestHandlerAdvice() {
+			return new AbstractRequestHandlerAdvice() {
+
+				@Override
+				protected Object doInvoke(ExecutionCallback callback, Object target, Message<?> message)
+						throws Exception {
+
+					adviceChannel().send(message);
+					return callback.execute();
+				}
+
+			};
+		}
+
+		@Bean
+		public PollableChannel adviceChannel() {
+			return new QueueChannel();
 		}
 
 		@Bean
@@ -334,11 +376,16 @@ public class TransformerTests {
 		}
 
 		@Bean
-		public IntegrationFlow replyProducingSubFlowEnricher(SomeService someService) {
+		public IntegrationFlow someServiceFlow() {
+			return f -> f
+					.<String>handle((p, h) -> someService().someServiceMethod(p));
+		}
+
+		@Bean
+		public IntegrationFlow replyProducingSubFlowEnricher() {
 			return f -> f
 					.enrich(e -> e.<TestPojo>requestPayload(p -> p.getPayload().getName())
-							.requestSubFlow(sf -> sf
-									.<String>handle((p, h) -> someService.someServiceMethod(p)))
+							.requestSubFlow(someServiceFlow())
 							.<String>headerFunction("foo", Message::getPayload)
 							.propertyFunction("name", Message::getPayload))
 					.channel("subFlowTestReplyChannel");

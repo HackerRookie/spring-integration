@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.ClassRule;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -55,7 +56,7 @@ import org.springframework.integration.stomp.event.StompExceptionEvent;
 import org.springframework.integration.stomp.event.StompIntegrationEvent;
 import org.springframework.integration.stomp.event.StompReceiptEvent;
 import org.springframework.integration.stomp.event.StompSessionConnectedEvent;
-import org.springframework.integration.test.support.LogAdjustingTestSupport;
+import org.springframework.integration.test.rule.Log4j2LevelAdjuster;
 import org.springframework.integration.test.support.LongRunningIntegrationTest;
 import org.springframework.integration.websocket.TomcatWebSocketTestServer;
 import org.springframework.messaging.Message;
@@ -69,7 +70,7 @@ import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
+import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Controller;
@@ -78,9 +79,9 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.config.annotation.AbstractWebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.web.socket.server.standard.TomcatRequestUpgradeStrategy;
 import org.springframework.web.socket.server.support.DefaultHandshakeHandler;
@@ -91,15 +92,21 @@ import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 /**
  * @author Artem Bilan
  * @author Gary Russell
+ *
  * @since 4.2
  */
 @ContextConfiguration(classes = StompMessageHandlerWebSocketIntegrationTests.ContextConfiguration.class)
 @RunWith(SpringJUnit4ClassRunner.class)
 @DirtiesContext
-public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTestSupport {
+public class StompMessageHandlerWebSocketIntegrationTests {
 
 	@ClassRule
 	public static LongRunningIntegrationTest longTests = new LongRunningIntegrationTest();
+
+	@Rule
+	public Log4j2LevelAdjuster adjuster =
+			Log4j2LevelAdjuster.trace()
+					.categories("org.springframework", "org.springframework.integration.stomp");
 
 	@Value("#{server.serverContext}")
 	private ApplicationContext serverContext;
@@ -111,10 +118,6 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 	@Autowired
 	@Qualifier("stompEvents")
 	private PollableChannel stompEvents;
-
-	public StompMessageHandlerWebSocketIntegrationTests() {
-		super("org.springframework", "org.springframework.integration.stomp");
-	}
 
 	@Test
 	public void testStompMessageHandler() throws InterruptedException {
@@ -212,7 +215,6 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 		}
 
 		@Bean
-		@SuppressWarnings("unchecked")
 		public ApplicationListener<ApplicationEvent> stompEventListener() {
 			ApplicationEventListeningMessageProducer producer = new ApplicationEventListeningMessageProducer();
 			producer.setEventTypes(StompIntegrationEvent.class);
@@ -224,10 +226,11 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 
 	// WebSocket Server part
 
-	@Target({ElementType.TYPE})
+	@Target({ ElementType.TYPE })
 	@Retention(RetentionPolicy.RUNTIME)
 	@Controller
 	private @interface IntegrationTestController {
+
 	}
 
 	@IntegrationTestController
@@ -248,7 +251,7 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 			basePackageClasses = StompMessageHandlerWebSocketIntegrationTests.class,
 			useDefaultFilters = false,
 			includeFilters = @ComponentScan.Filter(IntegrationTestController.class))
-	static class ServerConfig extends AbstractWebSocketMessageBrokerConfigurer {
+	static class ServerConfig implements WebSocketMessageBrokerConfigurer {
 
 		@Bean
 		public DefaultHandshakeHandler handshakeHandler() {
@@ -269,7 +272,7 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 
 		@Override
 		public void configureClientInboundChannel(ChannelRegistration registration) {
-			registration.setInterceptors(new ChannelInterceptorAdapter() {
+			registration.interceptors(new ChannelInterceptor() {
 
 				private final AtomicBoolean invoked = new AtomicBoolean();
 
@@ -277,7 +280,7 @@ public class StompMessageHandlerWebSocketIntegrationTests extends LogAdjustingTe
 				public Message<?> preSend(Message<?> message, MessageChannel channel) {
 					if (StompCommand.CONNECT.equals(StompHeaderAccessor.wrap(message).getCommand()) ||
 							this.invoked.compareAndSet(false, true)) {
-						return super.preSend(message, channel);
+						return message;
 					}
 					throw new RuntimeException("preSend intentional Exception");
 				}

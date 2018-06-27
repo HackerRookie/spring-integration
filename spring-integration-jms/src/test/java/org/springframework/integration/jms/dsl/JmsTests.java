@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2017 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -56,14 +57,15 @@ import org.springframework.integration.core.MessageSource;
 import org.springframework.integration.dsl.IntegrationFlow;
 import org.springframework.integration.dsl.IntegrationFlowDefinition;
 import org.springframework.integration.dsl.IntegrationFlows;
+import org.springframework.integration.dsl.MessageChannels;
 import org.springframework.integration.dsl.Pollers;
-import org.springframework.integration.dsl.channel.MessageChannels;
 import org.springframework.integration.endpoint.MethodInvokingMessageSource;
 import org.springframework.integration.scheduling.PollerMetadata;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.test.util.TestUtils;
 import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.core.JmsTemplate;
+import org.springframework.jms.listener.DefaultMessageListenerContainer;
 import org.springframework.jms.listener.MessageListenerContainer;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -71,10 +73,11 @@ import org.springframework.messaging.MessageHandler;
 import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.PollableChannel;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
+import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.stereotype.Component;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * @author Artem Bilan
@@ -324,9 +327,10 @@ public class JmsTests {
 		@Bean
 		public IntegrationFlow jmsMessageDrivenFlow() {
 			return IntegrationFlows
-					.from(Jms.messageDrivenChannelAdapter(jmsConnectionFactory())
+					.from(Jms.messageDrivenChannelAdapter(jmsConnectionFactory(), DefaultMessageListenerContainer.class)
 							.outputChannel(jmsMessageDrivenInputChannel())
-							.destination("jmsMessageDriven"))
+							.destination("jmsMessageDriven")
+					.configureListenerContainer(c -> c.clientId("foo")))
 					.<String, String>transform(String::toLowerCase)
 					.channel(jmsOutboundInboundReplyChannel())
 					.get();
@@ -340,12 +344,12 @@ public class JmsTests {
 		@Bean
 		public MessageChannel jmsMessageDrivenInputChannel() {
 			DirectChannel directChannel = new DirectChannel();
-			directChannel.addInterceptor(new ChannelInterceptorAdapter() {
+			directChannel.addInterceptor(new ChannelInterceptor() {
 
 				@Override
 				public Message<?> preSend(Message<?> message, MessageChannel channel) {
 					jmsMessageDrivenChannelCalled().set(true);
-					return super.preSend(message, channel);
+					return message;
 				}
 
 			});
@@ -375,9 +379,12 @@ public class JmsTests {
 
 		@Bean
 		public IntegrationFlow jmsInboundGatewayFlow() {
-			return IntegrationFlows.from(Jms.inboundGateway(jmsConnectionFactory())
-					.requestChannel(jmsInboundGatewayInputChannel())
-					.destination("jmsPipelineTest"))
+			return IntegrationFlows.from(
+					Jms.inboundGateway(jmsConnectionFactory())
+							.requestChannel(jmsInboundGatewayInputChannel())
+							.destination("jmsPipelineTest")
+							.configureListenerContainer(c ->
+									c.transactionManager(mock(PlatformTransactionManager.class))))
 					.<String, String>transform(String::toUpperCase)
 					.get();
 		}
@@ -390,12 +397,12 @@ public class JmsTests {
 		@Bean
 		public MessageChannel jmsInboundGatewayInputChannel() {
 			DirectChannel directChannel = new DirectChannel();
-			directChannel.addInterceptor(new ChannelInterceptorAdapter() {
+			directChannel.addInterceptor(new ChannelInterceptor() {
 
 				@Override
 				public Message<?> preSend(Message<?> message, MessageChannel channel) {
 					jmsInboundGatewayChannelCalled().set(true);
-					return super.preSend(message, channel);
+					return message;
 				}
 
 			});
@@ -408,7 +415,9 @@ public class JmsTests {
 					.from(Jms.messageDrivenChannelAdapter(jmsConnectionFactory())
 							.errorChannel(IntegrationContextUtils.ERROR_CHANNEL_BEAN_NAME)
 							.destination("jmsMessageDrivenRedelivery")
-							.configureListenerContainer(c -> c.id("jmsMessageDrivenRedeliveryFlowContainer")))
+							.configureListenerContainer(c -> c
+									.transactionManager(mock(PlatformTransactionManager.class))
+									.id("jmsMessageDrivenRedeliveryFlowContainer")))
 					.<String, String>transform(p -> {
 						throw new RuntimeException("intentional");
 					})
@@ -435,7 +444,7 @@ public class JmsTests {
 
 	@Component
 	@GlobalChannelInterceptor(patterns = "flow1QueueChannel")
-	public static class TestChannelInterceptor extends ChannelInterceptorAdapter {
+	public static class TestChannelInterceptor implements ChannelInterceptor {
 
 		private final AtomicInteger invoked = new AtomicInteger();
 

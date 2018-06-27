@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 the original author or authors.
+ * Copyright 2016-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.context.SmartLifecycle;
+import org.springframework.messaging.MessageChannel;
 
 /**
  * The standard implementation of the {@link IntegrationFlow} interface instantiated
@@ -44,7 +45,7 @@ import org.springframework.context.SmartLifecycle;
  * However, when we register an {@link IntegrationFlow} dynamically using the
  * {@link org.springframework.integration.dsl.context.IntegrationFlowContext} API,
  * the lifecycle processor from the application context is not involved;
- * therefore we should control the lifecyle of the beans manually, or rely on the
+ * therefore we should control the lifecycle of the beans manually, or rely on the
  * {@link org.springframework.integration.dsl.context.IntegrationFlowContext} API.
  * Its created registration <b>is</b> {@code autoStartup} by default and
  * starts the flow when it is registered. If you disable the registration's auto-
@@ -60,7 +61,7 @@ import org.springframework.context.SmartLifecycle;
  * @since 5.0
  *
  * @see IntegrationFlows
- * @see org.springframework.integration.config.dsl.IntegrationFlowBeanPostProcessor
+ * @see org.springframework.integration.dsl.context.IntegrationFlowBeanPostProcessor
  * @see org.springframework.integration.dsl.context.IntegrationFlowContext
  */
 public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle {
@@ -69,7 +70,7 @@ public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle 
 
 	private final List<SmartLifecycle> lifecycles = new LinkedList<>();
 
-	private final boolean registerComponents = true; // NOSONAR
+	private MessageChannel inputChannel;
 
 	private boolean running;
 
@@ -77,13 +78,25 @@ public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle 
 		this.integrationComponents = new LinkedHashMap<>(integrationComponents);
 	}
 
-	//TODO Figure out some custom DestinationResolver when we don't register singletons - remove NOSONAR above when done
-	/*public void setRegisterComponents(boolean registerComponents) {
-		this.registerComponents = registerComponents;
-	}*/
+	@Override
+	public void configure(IntegrationFlowDefinition<?> flow) {
+		throw new UnsupportedOperationException();
+	}
 
-	public boolean isRegisterComponents() {
-		return this.registerComponents;
+	@Override
+	public MessageChannel getInputChannel() {
+		if (this.inputChannel == null) {
+			this.inputChannel =
+					this.integrationComponents.keySet()
+							.stream()
+							.filter(MessageChannel.class::isInstance)
+							.map(MessageChannel.class::cast)
+							.findFirst()
+							.orElseThrow(() -> new IllegalStateException("The 'IntegrationFlow' [" + this + "] " +
+									"doesn't start with 'MessageChannel' for direct message sending."));
+		}
+
+		return this.inputChannel;
 	}
 
 	public void setIntegrationComponents(Map<Object, String> integrationComponents) {
@@ -93,11 +106,6 @@ public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle 
 
 	public Map<Object, String> getIntegrationComponents() {
 		return Collections.unmodifiableMap(this.integrationComponents);
-	}
-
-	@Override
-	public void configure(IntegrationFlowDefinition<?> flow) {
-		throw new UnsupportedOperationException();
 	}
 
 	@Override
@@ -157,6 +165,11 @@ public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle 
 		return 0;
 	}
 
+	@Override
+	public String toString() {
+		return "StandardIntegrationFlow{integrationComponents=" + this.integrationComponents + '}';
+	}
+
 	private static final class AggregatingCallback implements Runnable {
 
 		private final AtomicInteger count;
@@ -176,6 +189,5 @@ public class StandardIntegrationFlow implements IntegrationFlow, SmartLifecycle 
 		}
 
 	}
-
 
 }

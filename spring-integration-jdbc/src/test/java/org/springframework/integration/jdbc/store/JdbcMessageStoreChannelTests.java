@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.springframework.integration.jdbc.store;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.List;
@@ -24,10 +25,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.integration.endpoint.AbstractEndpoint;
 import org.springframework.integration.store.MessageGroup;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.GenericMessage;
@@ -38,6 +43,14 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.test.context.transaction.BeforeTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * @author Dave Syer
+ * @author Mark Fisher
+ * @author Oleg Zhurakousky
+ * @author Gary Russell
+ * @author Artem Bilan
+ */
+
 @ContextConfiguration
 @RunWith(SpringJUnit4ClassRunner.class)
 @DirtiesContext(classMode = ClassMode.AFTER_EACH_TEST_METHOD)
@@ -47,7 +60,26 @@ public class JdbcMessageStoreChannelTests {
 	private MessageChannel input;
 
 	@Autowired
+	private CountDownLatch afterCommitLatch;
+
+	@Autowired
 	private JdbcMessageStore messageStore;
+
+	@Autowired
+	@Qualifier("service-activator")
+	private AbstractEndpoint serviceActivator;
+
+
+	@Before
+	public void init() {
+		Service.reset(1);
+		this.serviceActivator.start();
+	}
+
+	@After
+	public void tearDown() {
+		this.serviceActivator.stop();
+	}
 
 	@BeforeTransaction
 	public void clear() {
@@ -57,19 +89,17 @@ public class JdbcMessageStoreChannelTests {
 	}
 
 	@Test
-	public void testSendAndActivate() throws Exception {
-		Service.reset(1);
-		input.send(new GenericMessage<String>("foo"));
-		Service.await(10000);
+	public void testSendAndActivate() throws InterruptedException {
+		this.input.send(new GenericMessage<>("foo"));
+		assertTrue(this.afterCommitLatch.await(10, TimeUnit.SECONDS));
 		assertEquals(1, Service.messages.size());
 		assertEquals(0, messageStore.getMessageGroup("JdbcMessageStoreChannelTests").size());
 	}
 
 	@Test
 	public void testSendAndActivateWithRollback() throws Exception {
-		Service.reset(1);
 		Service.fail = true;
-		input.send(new GenericMessage<String>("foo"));
+		input.send(new GenericMessage<>("foo"));
 		Service.await(10000);
 		assertEquals(1, Service.messages.size());
 		// After a rollback in the poller the message is still waiting to be delivered
@@ -77,13 +107,12 @@ public class JdbcMessageStoreChannelTests {
 	}
 
 	@Test
-	@Transactional
+	@Transactional(timeout = 1)
 	public void testSendAndActivateTransactionalSend() throws Exception {
-		Service.reset(1);
-		input.send(new GenericMessage<String>("foo"));
+		input.send(new GenericMessage<>("foo"));
 		// This will time out because the transaction has not committed yet
 		try {
-			Service.await(10000);
+			Service.await(10);
 			fail("Expected timeout");
 		}
 		catch (IllegalStateException e) {
@@ -96,21 +125,28 @@ public class JdbcMessageStoreChannelTests {
 	}
 
 	public static class Service {
+
 		private static boolean fail = false;
+
 		private static boolean alreadyFailed = false;
-		private static List<String> messages = new CopyOnWriteArrayList<String>();
+
+		private static List<String> messages = new CopyOnWriteArrayList<>();
+
 		private static CountDownLatch latch = new CountDownLatch(0);
+
 		public static void reset(int count) {
 			fail = false;
 			alreadyFailed = false;
 			messages.clear();
 			latch = new CountDownLatch(count);
 		}
+
 		public static void await(long timeout) throws InterruptedException {
 			if (!latch.await(timeout, TimeUnit.MILLISECONDS)) {
 				throw new IllegalStateException("Timed out waiting for message");
 			}
 		}
+
 		public String echo(String input) {
 			if (!alreadyFailed) {
 				messages.add(input);
@@ -122,6 +158,7 @@ public class JdbcMessageStoreChannelTests {
 			}
 			return input;
 		}
+
 	}
 
 }

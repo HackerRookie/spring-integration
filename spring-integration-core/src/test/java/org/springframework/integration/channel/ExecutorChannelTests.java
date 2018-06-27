@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import static org.mockito.Mockito.verify;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -45,7 +46,6 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.MessageHandler;
-import org.springframework.messaging.support.ChannelInterceptorAdapter;
 import org.springframework.messaging.support.ExecutorChannelInterceptor;
 import org.springframework.messaging.support.GenericMessage;
 import org.springframework.scheduling.concurrent.ConcurrentTaskExecutor;
@@ -76,8 +76,9 @@ public class ExecutorChannelTests {
 	@Test
 	public void roundRobinLoadBalancing() throws Exception {
 		int numberOfMessages = 11;
-		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(
-				Executors.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-")));
+		ScheduledExecutorService exec = Executors
+				.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-"));
+		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(exec);
 		ExecutorChannel channel = new ExecutorChannel(
 				taskExecutor, new RoundRobinLoadBalancingStrategy());
 		CountDownLatch latch = new CountDownLatch(numberOfMessages);
@@ -104,13 +105,15 @@ public class ExecutorChannelTests {
 		assertEquals(4, handler1.count.get());
 		assertEquals(4, handler2.count.get());
 		assertEquals(3, handler3.count.get());
+		exec.shutdownNow();
 	}
 
 	@Test
 	public void verifyFailoverWithLoadBalancing() throws Exception {
 		int numberOfMessages = 11;
-		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(
-				Executors.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-")));
+		ScheduledExecutorService exec = Executors
+				.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-"));
+		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(exec);
 		ExecutorChannel channel = new ExecutorChannel(
 				taskExecutor, new RoundRobinLoadBalancingStrategy());
 		CountDownLatch latch = new CountDownLatch(numberOfMessages);
@@ -138,13 +141,15 @@ public class ExecutorChannelTests {
 		assertEquals(0, handler2.count.get());
 		assertEquals(4, handler1.count.get());
 		assertEquals(7, handler3.count.get());
+		exec.shutdownNow();
 	}
 
 	@Test
 	public void verifyFailoverWithoutLoadBalancing() throws Exception {
 		int numberOfMessages = 11;
-		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(
-				Executors.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-")));
+		ScheduledExecutorService exec = Executors
+				.newSingleThreadScheduledExecutor(new CustomizableThreadFactory("test-"));
+		ConcurrentTaskExecutor taskExecutor = new ConcurrentTaskExecutor(exec);
 		ExecutorChannel channel = new ExecutorChannel(taskExecutor, null);
 		CountDownLatch latch = new CountDownLatch(numberOfMessages);
 		TestHandler handler1 = new TestHandler(latch);
@@ -169,6 +174,7 @@ public class ExecutorChannelTests {
 		assertEquals(0, handler1.count.get());
 		assertEquals(0, handler3.count.get());
 		assertEquals(numberOfMessages, handler2.count.get());
+		exec.shutdownNow();
 	}
 
 	@Test
@@ -255,8 +261,7 @@ public class ExecutorChannelTests {
 		}
 	}
 
-	private static class BeforeHandleInterceptor extends ChannelInterceptorAdapter
-			implements ExecutorChannelInterceptor {
+	private static class BeforeHandleInterceptor implements ExecutorChannelInterceptor {
 
 		private final AtomicInteger counter = new AtomicInteger();
 

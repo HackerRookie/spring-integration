@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2017 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import static org.junit.Assert.assertTrue;
 import java.util.Collections;
 import java.util.Map;
 
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -50,7 +51,7 @@ import org.springframework.integration.stomp.event.StompConnectionFailedEvent;
 import org.springframework.integration.stomp.event.StompIntegrationEvent;
 import org.springframework.integration.stomp.event.StompReceiptEvent;
 import org.springframework.integration.stomp.event.StompSessionConnectedEvent;
-import org.springframework.integration.test.support.LogAdjustingTestSupport;
+import org.springframework.integration.test.rule.Log4j2LevelAdjuster;
 import org.springframework.integration.websocket.TomcatWebSocketTestServer;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHandlingException;
@@ -76,9 +77,9 @@ import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.WebSocketClient;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
-import org.springframework.web.socket.config.annotation.AbstractWebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.springframework.web.socket.server.HandshakeInterceptor;
@@ -90,12 +91,18 @@ import org.springframework.web.socket.sockjs.client.WebSocketTransport;
 
 /**
  * @author Artem Bilan
+ *
  * @since 4.2
  */
 @ContextConfiguration(classes = StompInboundChannelAdapterWebSocketIntegrationTests.ContextConfiguration.class)
 @RunWith(SpringJUnit4ClassRunner.class)
 @DirtiesContext
-public class StompInboundChannelAdapterWebSocketIntegrationTests extends LogAdjustingTestSupport {
+public class StompInboundChannelAdapterWebSocketIntegrationTests {
+
+	@Rule
+	public Log4j2LevelAdjuster adjuster =
+			Log4j2LevelAdjuster.trace()
+					.categories("org.springframework", "org.springframework.integration.stomp");
 
 	@Value("#{server.serverContext}")
 	private ConfigurableApplicationContext serverContext;
@@ -115,9 +122,6 @@ public class StompInboundChannelAdapterWebSocketIntegrationTests extends LogAdju
 	@Autowired
 	private StompInboundChannelAdapter stompInboundChannelAdapter;
 
-	public StompInboundChannelAdapterWebSocketIntegrationTests() {
-		super("org.springframework", "org.springframework.integration.stomp");
-	}
 
 	@Test
 	public void testWebSocketStompClient() throws Exception {
@@ -274,7 +278,7 @@ public class StompInboundChannelAdapterWebSocketIntegrationTests extends LogAdju
 			handshakeHeaders.setOrigin("http://foo.com");
 			webSocketStompSessionManager.setHandshakeHeaders(handshakeHeaders);
 			StompHeaders stompHeaders = new StompHeaders();
-			stompHeaders.setHeartbeat(new long[] {10000, 10000});
+			stompHeaders.setHeartbeat(new long[] { 10000, 10000 });
 			webSocketStompSessionManager.setConnectHeaders(stompHeaders);
 			return webSocketStompSessionManager;
 		}
@@ -317,7 +321,7 @@ public class StompInboundChannelAdapterWebSocketIntegrationTests extends LogAdju
 
 	@Configuration
 	@EnableWebSocketMessageBroker
-	static class ServerConfig extends AbstractWebSocketMessageBrokerConfigurer {
+	static class ServerConfig implements WebSocketMessageBrokerConfigurer {
 
 		@Bean
 		public DefaultHandshakeHandler handshakeHandler() {

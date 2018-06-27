@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2016 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,12 @@ import org.springframework.context.Lifecycle;
 import org.springframework.integration.channel.ExecutorChannelInterceptorAware;
 import org.springframework.integration.core.MessageProducer;
 import org.springframework.integration.router.MessageRouter;
+import org.springframework.integration.support.utils.IntegrationUtils;
 import org.springframework.integration.transaction.IntegrationResourceHolder;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.MessageHandler;
-import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.PollableChannel;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.ExecutorChannelInterceptor;
@@ -135,15 +135,12 @@ public class PollingConsumer extends AbstractPollingEndpoint implements Integrat
 			if (!CollectionUtils.isEmpty(interceptorStack)) {
 				triggerAfterMessageHandled(theMessage, ex, interceptorStack);
 			}
-			if (ex instanceof MessagingException) {
-				throw (MessagingException) ex;
-			}
-			String description = "Failed to handle " + theMessage + " to " + this + " in " + this.handler;
-			throw new MessageDeliveryException(theMessage, description, ex);
+			throw IntegrationUtils.wrapInDeliveryExceptionIfNecessary(theMessage,
+					() -> "Failed to handle message to " + this + " in " + this.handler, ex);
 		}
 		catch (Error ex) { //NOSONAR - ok, we re-throw below
 			if (!CollectionUtils.isEmpty(interceptorStack)) {
-				String description = "Failed to handle " + theMessage + " to " + this + " in " + this.handler;
+				String description = "Failed to handle message to " + this + " in " + this.handler;
 				triggerAfterMessageHandled(theMessage,
 						new MessageDeliveryException(theMessage, description, ex),
 						interceptorStack);

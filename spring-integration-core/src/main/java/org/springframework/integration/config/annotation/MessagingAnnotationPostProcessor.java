@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2017 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,8 +36,6 @@ import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.InitializingBean;
-import org.springframework.beans.factory.NoSuchBeanDefinitionException;
-import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -52,15 +50,11 @@ import org.springframework.integration.annotation.Router;
 import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.integration.annotation.Splitter;
 import org.springframework.integration.annotation.Transformer;
-import org.springframework.integration.context.IntegrationContextUtils;
 import org.springframework.integration.endpoint.AbstractEndpoint;
-import org.springframework.integration.support.SmartLifecycleRoleController;
 import org.springframework.integration.util.MessagingAnnotationUtils;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
@@ -74,15 +68,12 @@ import org.springframework.util.StringUtils;
  * @author Gary Russell
  * @author Rick Hogge
  */
-public class MessagingAnnotationPostProcessor implements BeanPostProcessor, BeanFactoryAware,
-		InitializingBean, SmartInitializingSingleton {
+public class MessagingAnnotationPostProcessor implements BeanPostProcessor, BeanFactoryAware, InitializingBean {
 
 	protected final Log logger = LogFactory.getLog(this.getClass()); // NOSONAR
 
 	private final Map<Class<? extends Annotation>, MethodAnnotationPostProcessor<?>> postProcessors =
 			new HashMap<Class<? extends Annotation>, MethodAnnotationPostProcessor<?>>();
-
-	private final MultiValueMap<String, String> lazyLifecycleRoles = new LinkedMultiValueMap<String, String>();
 
 	private ConfigurableListableBeanFactory beanFactory;
 
@@ -135,21 +126,6 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 	}
 
 	@Override
-	public void afterSingletonsInstantiated() {
-		SmartLifecycleRoleController roleController;
-		try {
-			roleController = this.beanFactory.getBean(IntegrationContextUtils.INTEGRATION_LIFECYCLE_ROLE_CONTROLLER,
-					SmartLifecycleRoleController.class);
-			for (Entry<String, List<String>> entry : this.lazyLifecycleRoles.entrySet()) {
-				roleController.addLifecyclesToRole(entry.getKey(), entry.getValue());
-			}
-		}
-		catch (NoSuchBeanDefinitionException e) {
-			this.logger.error("No LifecycleRoleController in the context");
-		}
-	}
-
-	@Override
 	public Object postProcessAfterInitialization(final Object bean, final String beanName) throws BeansException {
 		Assert.notNull(this.beanFactory, "BeanFactory must not be null");
 
@@ -171,7 +147,11 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 					}
 				}
 			}
-
+			if (StringUtils.hasText(MessagingAnnotationUtils.endpointIdValue(method))
+					&& annotationChains.keySet().size() > 1) {
+				throw new IllegalStateException("@EndpointId on " + method.toGenericString()
+						+ " can only have one EIP annotation, found: " + annotationChains.keySet().size());
+			}
 			for (Entry<Class<? extends Annotation>, List<Annotation>> entry : annotationChains.entrySet()) {
 				Class<? extends Annotation> annotationType = entry.getKey();
 				List<Annotation> annotations = entry.getValue();
@@ -222,16 +202,15 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 					}
 				}
 
+				Role role = AnnotationUtils.findAnnotation(method, Role.class);
+				if (role != null) {
+					endpoint.setRole(role.value());
+				}
+
 				String endpointBeanName = generateBeanName(beanName, method, annotationType);
 				endpoint.setBeanName(endpointBeanName);
 				getBeanFactory().registerSingleton(endpointBeanName, endpoint);
 				getBeanFactory().initializeBean(endpoint, endpointBeanName);
-
-				Role role = AnnotationUtils.findAnnotation(method, Role.class);
-				if (role != null) {
-					MessagingAnnotationPostProcessor.this.lazyLifecycleRoles.add(role.value(),
-							endpointBeanName);
-				}
 			}
 		}
 	}
@@ -246,7 +225,7 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 		List<Annotation> annotationChain = new LinkedList<Annotation>();
 		Set<Annotation> visited = new HashSet<Annotation>();
 		for (Annotation ann : annotations) {
-			this.recursiveFindAnnotation(annotationType, ann, annotationChain, visited);
+			recursiveFindAnnotation(annotationType, ann, annotationChain, visited);
 			if (annotationChain.size() > 0) {
 				Collections.reverse(annotationChain);
 				return annotationChain;
@@ -265,7 +244,7 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 			if (!ann.equals(metaAnn) && !visited.contains(metaAnn)
 					&& !(metaAnn.annotationType().getPackage().getName().startsWith("java.lang"))) {
 				visited.add(metaAnn); // prevent infinite recursion if the same annotation is found again
-				if (this.recursiveFindAnnotation(annotationType, metaAnn, annotationChain, visited)) {
+				if (recursiveFindAnnotation(annotationType, metaAnn, annotationChain, visited)) {
 					annotationChain.add(ann);
 					return true;
 				}
@@ -276,22 +255,21 @@ public class MessagingAnnotationPostProcessor implements BeanPostProcessor, Bean
 
 	protected String generateBeanName(String originalBeanName, Method method,
 			Class<? extends Annotation> annotationType) {
-		String baseName = originalBeanName + "." + method.getName() + "."
-				+ ClassUtils.getShortNameAsProperty(annotationType);
-		String name = baseName;
-		int count = 1;
-		while (this.beanFactory.containsBean(name)) {
-			name = baseName + "#" + (++count);
+		String name = MessagingAnnotationUtils.endpointIdValue(method);
+		if (!StringUtils.hasText(name)) {
+			String baseName = originalBeanName + "." + method.getName() + "."
+					+ ClassUtils.getShortNameAsProperty(annotationType);
+			name = baseName;
+			int count = 1;
+			while (this.beanFactory.containsBean(name)) {
+				name = baseName + "#" + (++count);
+			}
 		}
 		return name;
 	}
 
 	protected Map<Class<? extends Annotation>, MethodAnnotationPostProcessor<?>> getPostProcessors() {
 		return this.postProcessors;
-	}
-
-	protected MultiValueMap<String, String> getLazyLifecycleRoles() {
-		return this.lazyLifecycleRoles;
 	}
 
 }

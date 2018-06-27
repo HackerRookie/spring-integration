@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2016 the original author or authors.
+ * Copyright 2015-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.channel.QueueChannel;
 import org.springframework.integration.config.EnableIntegration;
+import org.springframework.integration.config.EnablePublisher;
 import org.springframework.integration.handler.ReplyRequiredException;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.integration.test.util.TestUtils;
@@ -72,6 +73,7 @@ import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 /**
  * @author Gary Russell
  * @author Artem Bilan
+ *
  * @since 4.2
  *
  */
@@ -132,6 +134,7 @@ public class BarrierMessageHandlerTests {
 		assertEquals("bar", result.get(1));
 		assertEquals(0, suspensions.size());
 		assertEquals(0, inProcess.size());
+		exec.shutdownNow();
 	}
 
 	@Test
@@ -141,8 +144,8 @@ public class BarrierMessageHandlerTests {
 		handler.setOutputChannel(outputChannel);
 		handler.setBeanFactory(mock(BeanFactory.class));
 		handler.afterPropertiesSet();
-		Executors.newSingleThreadExecutor()
-				.execute(() -> handler.trigger(MessageBuilder.withPayload("bar").setCorrelationId("foo").build()));
+		ExecutorService exec = Executors.newSingleThreadExecutor();
+		exec.execute(() -> handler.trigger(MessageBuilder.withPayload("bar").setCorrelationId("foo").build()));
 		Map<?, ?> suspensions = TestUtils.getPropertyValue(handler, "suspensions", Map.class);
 		int n = 0;
 		while (n++ < 100 && suspensions.size() == 0) {
@@ -156,6 +159,7 @@ public class BarrierMessageHandlerTests {
 		assertEquals("foo", result.get(0));
 		assertEquals("bar", result.get(1));
 		assertEquals(0, suspensions.size());
+		exec.shutdownNow();
 	}
 
 	@Test
@@ -169,7 +173,8 @@ public class BarrierMessageHandlerTests {
 		handler.setBeanFactory(mock(BeanFactory.class));
 		handler.afterPropertiesSet();
 		final CountDownLatch latch = new CountDownLatch(1);
-		Executors.newSingleThreadExecutor().execute(() -> {
+		ExecutorService exec = Executors.newSingleThreadExecutor();
+		exec.execute(() -> {
 			handler.handleMessage(MessageBuilder.withPayload("foo").setCorrelationId("foo").build());
 			latch.countDown();
 		});
@@ -190,6 +195,7 @@ public class BarrierMessageHandlerTests {
 		assertSame(discard, triggerMessage);
 		handler.handleMessage(MessageBuilder.withPayload("foo").setCorrelationId("foo").build());
 		assertEquals(0, suspensions.size());
+		exec.shutdownNow();
 	}
 
 	@Test
@@ -218,7 +224,8 @@ public class BarrierMessageHandlerTests {
 		handler.afterPropertiesSet();
 		final AtomicReference<Exception> exception = new AtomicReference<Exception>();
 		final CountDownLatch latch = new CountDownLatch(1);
-		Executors.newSingleThreadExecutor().execute(() -> {
+		ExecutorService exec = Executors.newSingleThreadExecutor();
+		exec.execute(() -> {
 			try {
 				handler.handleMessage(MessageBuilder.withPayload("foo").setCorrelationId("foo").build());
 			}
@@ -238,6 +245,7 @@ public class BarrierMessageHandlerTests {
 		assertTrue(latch.await(10, TimeUnit.SECONDS));
 		assertSame(exc, exception.get().getCause());
 		assertEquals(0, suspensions.size());
+		exec.shutdownNow();
 	}
 
 	@Test
@@ -257,6 +265,7 @@ public class BarrierMessageHandlerTests {
 
 	@Configuration
 	@EnableIntegration
+	@EnablePublisher
 	public static class Config {
 
 		@Bean
